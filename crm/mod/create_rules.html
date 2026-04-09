@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create Rule</title>
+</head>
+<body>
+    <h1>Create Rule</h1>
+    <form method="post" action="">
+        {% csrf_token %}
+        <label for="user_id">User ID:</label>
+        <input type="text" id="user_id" name="user_id"><br>
+
+        <label for="rule_name">Rule Name:</label>
+        <input type="text" id="rule_name" name="rule_name"><br>
+
+        <label for="src">Source:</label>
+        <input type="text" id="src" name="src"><br>
+
+        <label for="tgt">Target:</label>
+        <input type="text" id="tgt" name="tgt"><br>
+
+        <label for="unique_number">Unique Number:</label>
+        <input type="text" id="unique_number" name="unique_number"><br>
+
+        <label for="error_handler">Error Handler:</label>
+        <input type="text" id="error_handler" name="error_handler"><br>
+
+        <button type="submit">Submit</button>
+    </form>
+</body>
+</html>

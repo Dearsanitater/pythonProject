@@ -1,0 +1,996 @@
+case 001 "compute列" 0
+before:
+drop table yuangonggongzibiao;
+go
+src_sql:
+create table yuangonggongzibiao(
+	zhigongbianhao int primary key,
+	zhigonghao varchar(50) unique,
+	changkuhao varchar(50),
+	jibengongzi int,
+	jiabangongzi int,
+	jiangjin int,
+	koulv int,
+  yingfagongzi as (jibengongzi+jiabangongzi+jiangjin-koulv), --as为自动计算字段，不能输入值--
+	CONSTRAINT check_yuangonggongzibiao_jibengongzi CHECK  (jibengongzi>=800 and jibengongzi<=21000)
+);
+
+insert into yuangonggongzibiao values(1,'158','hz001',8000,2000,1500,800);
+insert into yuangonggongzibiao values(2,'159','hz002',9000,3000,2500,1800);
+insert into yuangonggongzibiao values(3,'160','hz003',6000,1000,1200,500);
+update yuangonggongzibiao set  jiangjin=3000 where zhigongbianhao=1;
+update yuangonggongzibiao set  jiangjin=3200 where zhigongbianhao=2;
+delete from yuangonggongzibiao where zhigongbianhao=3;
+go
+
+tgt_sql:
+select * from yuangonggongzibiao order by zhigongbianhao;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('yuangonggongzibiao') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('yuangonggongzibiao') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='yuangonggongzibiao'  ORDER BY   c.name,a.name,d.name;
+go
+
+case 002 "udt表" 0
+before:
+drop table dbo.user_log_detail;
+drop type dbo.dt_datea;
+drop type dbo.dt_int64;
+drop type dbo.dt_int16;
+go
+src_sql:
+create type dt_datea from int not null;
+create type dt_int64 from bigint not null;
+create type dt_int16 from smallint not null;
+
+CREATE TABLE dbo.user_log_detail(
+	[OCCUR_DATE] dbo.dt_datea NOT NULL,
+	[SERIAL_NO] dbo.dt_int64 NOT NULL,
+	[SUBSYS_SN] dbo.dt_int16 NOT NULL,
+	[FLD_NAME] varchar(128) NOT NULL,
+	[OLD_VAL] varchar(256) NOT NULL,
+	[NEW_VAL] varchar(256) NOT NULL,
+ CONSTRAINT pk_user_log_detail PRIMARY KEY CLUSTERED
+(
+	[SERIAL_NO] ASC,
+	[OCCUR_DATE] ASC,
+	[FLD_NAME] ASC,
+	[SUBSYS_SN] ASC
+));
+INSERT dbo.user_log_detail VALUES (20200123, 2020012300000001, 39, N'上海期权行情信息(mktdt73.txt)', N'2020-01-23 09:11:22.453', N'2020-01-23 09:11:29.988');
+INSERT dbo.user_log_detail VALUES (20200123, 2020012300000002, 39, N'上海期权基础信息(reff030123.txt)', N'2020-01-23 09:11:22.139', N'2020-01-23 09:11:32.572');
+INSERT dbo.user_log_detail VALUES (20200123, 2020012300000003, 39, N'深圳期权合约组合策略信息(optioncombinationstrategy_20200123.xml)', N'2020-01-23 09:11:33.088', N'2020-01-23 09:11:33.124');
+INSERT dbo.user_log_detail VALUES (20200123, 2020012300000004, 39, N'上海证券信息与行情库(新)(mktdt00.txt)', N'2020-01-23 09:11:22.453', N'2020-01-23 09:11:36.930');
+INSERT dbo.user_log_detail VALUES (20200123, 2020012300000005, 39, N'上海期权组合策略文件信息(zhcl030123.txt)', N'2020-01-23 09:11:30.509', N'2020-01-23 09:11:37.449');
+update dbo.user_log_detail set occur_date=20210111,subsys_sn=40 where serial_no=2020012300000001;
+delete from dbo.user_log_detail where serial_no=2020012300000005;
+go
+tgt_sql:
+select *  from dbo.user_log_detail;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('user_log_detail') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('user_log_detail') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='user_log_detail'  ORDER BY   c.name,a.name,d.name;
+go
+
+case 003 "外键表" 0
+before:
+drop table salary;
+drop table empinfo;
+go
+src_sql:
+create table empinfo(
+no int primary key,
+ename varchar(20),
+job varchar(20),
+birth datetime
+);
+create table salary(
+no int primary key,
+base_salary numeric(8,2),
+job_allowance numeric(8,2),
+travelling_allowance numeric(8,2),
+personal_income_tax numeric(8,2),
+constraint salary_eid_fk foreign key(no) references empinfo(no)
+);
+go
+insert into empinfo values(1,'张毅','销售','1991-12-10');
+insert into empinfo values(2,'刘晨','库管','1993-02-11');
+insert into empinfo values(3,'王璐','售后','1992-10-07');
+insert into empinfo values(4,'张罗','技术','1995-08-13');
+insert into salary values(1,3000.51,1000.89,500.72,300.24);
+insert into salary values(2,3500.51,1200.19,600.22,400.24);
+insert into salary values(3,4000.51,1300.29,700.32,400.24);
+insert into salary values(4,5000.51,1400.39,400.42,600.24);
+update salary set  base_salary=600000,job_allowance=1800.34 where no=2;
+update empinfo set  ename='刘琳',job='主管' where no=2;
+delete from salary where no=4;
+delete from empinfo where no=4;
+go
+tgt_sql:
+select * from empinfo;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('empinfo') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('empinfo') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='empinfo'  ORDER BY   c.name,a.name,d.name;
+select * from salary;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('salary') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('salary') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='salary'  ORDER BY   c.name,a.name,d.name;
+go
+
+case 004 "华东医院bit类型" 0
+before:
+drop table TPATIENTVISIT;
+go
+src_sql:
+CREATE TABLE [dbo].[TPATIENTVISIT](
+	[FID] [bigint] primary key NOT NULL,
+	[FPRN] [varchar](20) NOT NULL,
+	[FTIMES] [int] NOT NULL,
+	[FICDVERSION] [tinyint] NOT NULL,
+	[FZYID] [varchar](20) NULL,
+	[FAGE] [varchar](20) NULL,
+	[FNAME] [varchar](100) NULL,
+	[FSEXBH] [varchar](20) NULL,
+	[FSEX] [varchar](20) NULL,
+	[FBIRTHDAY] [datetime] NULL,
+	[FBIRTHPLACE] [varchar](100) NULL,
+	[FIDCARD] [varchar](30) NULL,
+	[FCOUNTRYBH] [varchar](20) NULL,
+	[FCOUNTRY] [varchar](100) NULL,
+	[FNATIONALITYBH] [varchar](20) NULL,
+	[FNATIONALITY] [varchar](50) NULL,
+	[FJOB] [varchar](100) NULL,
+	[FSTATUSBH] [varchar](20) NULL,
+	[FSTATUS] [varchar](20) NULL,
+	[FDWNAME] [varchar](200) NULL,
+	[FDWADDR] [varchar](300) NULL,
+	[FDWTELE] [varchar](40) NULL,
+	[FDWPOST] [varchar](20) NULL,
+	[FHKADDR] [varchar](300) NULL,
+	[FHKPOST] [varchar](20) NULL,
+	[FLXNAME] [varchar](30) NULL,
+	[FRELATE] [varchar](100) NULL,
+	[FLXADDR] [varchar](100) NULL,
+	[FLXTELE] [varchar](40) NULL,
+	[FFBBH] [varchar](20) NULL,
+	[FFB] [varchar](30) NULL,
+	[FASCARD1] [varchar](100) NULL,
+	[FASCARD2] [varchar](100) NULL,
+	[FRYDATE] [datetime] NULL,
+	[FRYTIME] [varchar](10) NULL,
+	[FRYTYKH] [varchar](30) NULL,
+	[FRYDEPT] [varchar](30) NULL,
+	[FRYBS] [varchar](100) NULL,
+	[FCYDATE] [datetime] NULL,
+	[FCYTIME] [varchar](10) NULL,
+	[FCYTYKH] [varchar](30) NULL,
+	[FCYDEPT] [varchar](30) NULL,
+	[FCYBS] [varchar](100) NULL,
+	[FDAYS] [int] NULL,
+	[FMZZDBH] [varchar](30) NULL,
+	[FMZZD] [varchar](200) NULL,
+	[FMZDOCTBH] [varchar](20) NULL,
+	[FMZDOCT] [varchar](30) NULL,
+	[FRYINFOBH] [varchar](20) NULL,
+	[FRYINFO] [varchar](20) NULL,
+	[FRYZDBH] [varchar](30) NULL,
+	[FRYZD] [varchar](2000) NULL,
+	[FQZDATE] [datetime] NULL,
+	[FPHZD] [varchar](1000) NULL,
+	[FGMYW] [varchar](200) NULL,
+	[FHBSAGBH] [varchar](20) NULL,
+	[FHBSAG] [varchar](20) NULL,
+	[FHCVABBH] [varchar](20) NULL,
+	[FHCVAB] [varchar](20) NULL,
+	[FHIVABBH] [varchar](20) NULL,
+	[FHIVAB] [varchar](20) NULL,
+	[FMZCYACCOBH] [varchar](20) NULL,
+	[FMZCYACCO] [varchar](20) NULL,
+	[FRYCYACCOBH] [varchar](20) NULL,
+	[FRYCYACCO] [varchar](20) NULL,
+	[FLCBLACCOBH] [varchar](20) NULL,
+	[FLCBLACCO] [varchar](20) NULL,
+	[FFSBLACCOBH] [varchar](20) NULL,
+	[FFSBLACCO] [varchar](20) NULL,
+	[FOPACCOBH] [varchar](20) NULL,
+	[FOPACCO] [varchar](20) NULL,
+	[FQJTIMES] [int] NULL,
+	[FQJSUCTIMES] [int] NULL,
+	[FKZRBH] [varchar](20) NULL,
+	[FKZR] [varchar](30) NULL,
+	[FZRDOCTBH] [varchar](30) NULL,
+	[FZRDOCTOR] [varchar](30) NULL,
+	[FZZDOCTBH] [varchar](30) NULL,
+	[FZZDOCT] [varchar](30) NULL,
+	[FZYDOCTBH] [varchar](30) NULL,
+	[FZYDOCT] [varchar](30) NULL,
+	[FJXDOCTBH] [varchar](30) NULL,
+	[FJXDOCT] [varchar](30) NULL,
+	[FYJSSXDOCTBH] [varchar](30) NULL,
+	[FYJSSXDOCT] [varchar](30) NULL,
+	[FSXDOCTBH] [varchar](30) NULL,
+	[FSXDOCT] [varchar](30) NULL,
+	[FBMYBH] [varchar](30) NULL,
+	[FBMY] [varchar](30) NULL,
+	[FZLRBH] [varchar](20) NULL,
+	[FZLR] [varchar](20) NULL,
+	[FQUALITYBH] [varchar](20) NULL,
+	[FQUALITY] [varchar](20) NULL,
+	[FZKDOCTBH] [varchar](20) NULL,
+	[FZKDOCT] [varchar](30) NULL,
+	[FZKNURSEBH] [varchar](20) NULL,
+	[FZKNURSE] [varchar](30) NULL,
+	[FZKRQ] [datetime] NULL,
+	[FMZDEADBH] [varchar](20) NULL,
+	[FMZDEAD] [varchar](20) NULL,
+	[FSUM1] [numeric](18, 4) NULL,
+	[FCWF] [numeric](18, 4) NULL,
+	[FHLF] [numeric](18, 4) NULL,
+	[FXYF] [numeric](18, 4) NULL,
+	[FZYF] [numeric](18, 4) NULL,
+	[FZCHYF] [numeric](18, 4) NULL,
+	[FZCYF] [numeric](18, 4) NULL,
+	[FFSF] [numeric](18, 4) NULL,
+	[FHYF] [numeric](18, 4) NULL,
+	[FSYF] [numeric](18, 4) NULL,
+	[FSXF] [numeric](18, 4) NULL,
+	[FZLF] [numeric](18, 4) NULL,
+	[FSSF] [numeric](18, 4) NULL,
+	[FJSF] [numeric](18, 4) NULL,
+	[FJCF] [numeric](18, 4) NULL,
+	[FMZF] [numeric](18, 4) NULL,
+	[FYEF] [numeric](18, 4) NULL,
+	[FPCF] [numeric](18, 4) NULL,
+	[FQTF] [numeric](18, 4) NULL,
+	[FBODYBH] [varchar](20) NULL,
+	[FBODY] [varchar](20) NULL,
+	[FISOPFIRSTBH] [varchar](20) NULL,
+	[FISOPFIRST] [varchar](20) NULL,
+	[FISZLFIRSTBH] [varchar](20) NULL,
+	[FISZLFIRST] [varchar](20) NULL,
+	[FISJCFIRSTBH] [varchar](20) NULL,
+	[FISJCFIRST] [varchar](20) NULL,
+	[FISZDFIRSTBH] [varchar](20) NULL,
+	[FISZDFIRST] [varchar](20) NULL,
+	[FISSZBH] [varchar](20) NULL,
+	[FISSZ] [varchar](20) NULL,
+	[FSZQX] [varchar](20) NULL,
+	[FSAMPLEBH] [varchar](20) NULL,
+	[FSAMPLE] [varchar](20) NULL,
+	[FBLOODBH] [varchar](20) NULL,
+	[FBLOOD] [varchar](20) NULL,
+	[FRHBH] [varchar](20) NULL,
+	[FRH] [varchar](20) NULL,
+	[FSXFYBH] [varchar](20) NULL,
+	[FSXFY] [varchar](20) NULL,
+	[FSYFYBH] [varchar](20) NULL,
+	[FSYFY] [varchar](20) NULL,
+	[FREDCELL] [float] NULL,
+	[FPLAQUE] [float] NULL,
+	[FSEROUS] [float] NULL,
+	[FALLBLOOD] [numeric](18, 2) NULL,
+	[FOTHERBLOOD] [float] NULL,
+	[FHZYJ] [int] NULL,
+	[FHZYC] [int] NULL,
+	[FHLTJ] [numeric](18, 1) NULL,
+	[FHL1] [numeric](18, 1) NULL,
+	[FHL2] [numeric](18, 1) NULL,
+	[FHL3] [numeric](18, 1) NULL,
+	[FHLZZ] [int] NULL,
+	[FHLTS] [int] NULL,
+	[FBABYNUM] [int] NULL,
+	[FTWILL] [bit] NULL,
+	[FQJBR] [bit] NULL,
+	[FQJSUC] [bit] NULL,
+	[FTHREQZ] [bit] NULL,
+	[FBACK] [bit] NULL,
+	[FIFZDSS] [bit] NULL,
+	[FIFDBZ] [varchar](20) NULL,
+	[FZLFZY] [numeric](18, 4) NULL,
+	[FZKTYKH] [varchar](30) NULL,
+	[FZKDEPT] [varchar](30) NULL,
+	[FZKDATE] [datetime] NULL,
+	[FZKTIME] [varchar](10) NULL,
+	[FSRYBH] [varchar](20) NULL,
+	[FSRY] [varchar](30) NULL,
+	[FWORKRQ] [datetime] NULL,
+	[FJBFXBH] [varchar](20) NULL,
+	[FJBFX] [varchar](20) NULL,
+	[FFHGDBH] [varchar](20) NULL,
+	[FFHGD] [varchar](20) NULL,
+	[FSOURCEBH] [varchar](20) NULL,
+	[FSOURCE] [varchar](100) NULL,
+	[FIFSS] [bit] NULL,
+	[FIFFYK] [bit] NULL,
+	[FBFZ] [bit] NULL,
+	[FYNGR] [int] NULL,
+	[FDATACHECK] [varchar](100) NULL,
+	[FEXTEND1] [varchar](2000) NULL,
+	[FEXTEND2] [varchar](2000) NULL,
+	[FEXTEND3] [varchar](2000) NULL,
+	[FEXTEND4] [varchar](2000) NULL,
+	[FEXTEND5] [varchar](2000) NULL,
+	[FEXTEND6] [varchar](2000) NULL,
+	[FEXTEND7] [varchar](2000) NULL,
+	[FEXTEND8] [varchar](2000) NULL,
+	[FEXTEND9] [varchar](2000) NULL,
+	[FEXTEND10] [varchar](2000) NULL,
+	[FEXTEND11] [varchar](2000) NULL,
+	[FEXTEND12] [varchar](2000) NULL,
+	[FEXTEND13] [varchar](2000) NULL,
+	[FEXTEND14] [varchar](2000) NULL,
+	[FEXTEND15] [varchar](2000) NULL,
+	[FFLAG] [tinyint] NULL,
+	[FQSHOW] [varchar](50) NULL,
+	[FNATIVE] [varchar](100) NULL,
+	[FCURRADDR] [varchar](300) NULL,
+	[FCURRTELE] [varchar](40) NULL,
+	[FCURRPOST] [varchar](20) NULL,
+	[FJOBBH] [varchar](20) NULL,
+	[FCSTZ] [float] NULL,
+	[FRYTZ] [float] NULL,
+	[FRYTJBH] [varchar](20) NULL,
+	[FRYTJ] [varchar](20) NULL,
+	[FYCLJBH] [varchar](20) NULL,
+	[FYCLJ] [varchar](20) NULL,
+	[FPHZDBH] [varchar](30) NULL,
+	[FPHZDNUM] [varchar](200) NULL,
+	[FIFGMYWBH] [varchar](20) NULL,
+	[FIFGMYW] [varchar](20) NULL,
+	[FNURSEBH] [varchar](30) NULL,
+	[FNURSE] [varchar](30) NULL,
+	[FLYFSBH] [varchar](20) NULL,
+	[FLYFS] [varchar](200) NULL,
+	[FYZOUTHOSTITAL] [varchar](200) NULL,
+	[FSQOUTHOSTITAL] [varchar](200) NULL,
+	[FISAGAINRYBH] [varchar](20) NULL,
+	[FISAGAINRY] [varchar](400) NULL,
+	[FISAGAINRYMD] [varchar](400) NULL,
+	[FRYQHMDAYS] [int] NULL,
+	[FRYQHMHOURS] [int] NULL,
+	[FRYQHMMINS] [int] NULL,
+	[FRYQHMCOUNTS] [int] NULL,
+	[FRYHMDAYS] [int] NULL,
+	[FRYHMHOURS] [int] NULL,
+	[FRYHMMINS] [int] NULL,
+	[FRYHMCOUNTS] [int] NULL,
+	[FFBBHNEW] [varchar](20) NULL,
+	[FFBNEW] [varchar](30) NULL,
+	[FZFJE] [numeric](18, 4) NULL,
+	[FZHFWLYLF] [numeric](18, 4) NULL,
+	[FZHFWLCZF] [numeric](18, 4) NULL,
+	[FZHFWLHLF] [numeric](18, 4) NULL,
+	[FZHFWLQTF] [numeric](18, 4) NULL,
+	[FZDLBLF] [numeric](18, 4) NULL,
+	[FZDLSSSF] [numeric](18, 4) NULL,
+	[FZDLYXF] [numeric](18, 4) NULL,
+	[FZDLLCF] [numeric](18, 4) NULL,
+	[FZLLFFSSF] [numeric](18, 4) NULL,
+	[FZLLFWLZWLF] [numeric](18, 4) NULL,
+	[FZLLFSSF] [numeric](18, 4) NULL,
+	[FZLLFMZF] [numeric](18, 4) NULL,
+	[FZLLFSSZLF] [numeric](18, 4) NULL,
+	[FKFLKFF] [numeric](18, 4) NULL,
+	[FZYLZF] [numeric](18, 4) NULL,
+	[FXYLGJF] [numeric](18, 4) NULL,
+	[FXYLXF] [numeric](18, 4) NULL,
+	[FXYLBQBF] [numeric](18, 4) NULL,
+	[FXYLQDBF] [numeric](18, 4) NULL,
+	[FXYLYXYZF] [numeric](18, 4) NULL,
+	[FXYLXBYZF] [numeric](18, 4) NULL,
+	[FHCLCJF] [numeric](18, 4) NULL,
+	[FHCLZLF] [numeric](18, 4) NULL,
+	[FHCLSSF] [numeric](18, 4) NULL,
+	[FZHFWLYLF01] [numeric](18, 4) NULL,
+	[FZHFWLYLF02] [numeric](18, 4) NULL,
+	[FZYLZDF] [numeric](18, 4) NULL,
+	[FZYLZLF] [numeric](18, 4) NULL,
+	[FZYLZLF01] [numeric](18, 4) NULL,
+	[FZYLZLF02] [numeric](18, 4) NULL,
+	[FZYLZLF03] [numeric](18, 4) NULL,
+	[FZYLZLF04] [numeric](18, 4) NULL,
+	[FZYLZLF05] [numeric](18, 4) NULL,
+	[FZYLZLF06] [numeric](18, 4) NULL,
+	[FZYLQTF] [numeric](18, 4) NULL,
+	[FZYLQTF01] [numeric](18, 4) NULL,
+	[FZYLQTF02] [numeric](18, 4) NULL,
+	[FZCLJGZJF] [numeric](18, 4) NULL,
+	[FGDLSH] [varchar](200) NULL,
+	[FYHZWDJZQK] [varchar](4) NULL,
+	[FZWDCSMC] [varchar](100) NULL,
+	[FZBDZYQK] [varchar](4) NULL,
+	[FWDCSMC] [varchar](100) NULL,
+	[FYHXJSJ] [float] NULL,
+	[fzwdjjreason] [varchar](2) NULL,
+	[fzybsjjreason] [varchar](2) NULL,
+	[FBIRTHPLACEBH] [varchar](50) NULL,
+	[fdwaddrbh] [varchar](50) NULL,
+	[fhkaddrbh] [varchar](50) NULL,
+	[flxaddrbh] [varchar](50) NULL,
+	[fcurraddrbh] [varchar](50) NULL,
+	[fifsyhxj] [varchar](20) NULL,
+	[fbarcode] [varchar](50) NULL,
+	[fzyzdqzdate] [datetime] NULL,
+	[fzyqjisbwbzbh] [varchar](10) NULL,
+	[fisnnblbh] [varchar](20) NULL,
+	[fisnnbl] [varchar](20) NULL,
+	[fzyqjisbwbz] [varchar](20) NULL,
+	[ffhqjbh] [varchar](20) NULL,
+	[ffhqjsucbh] [varchar](20) NULL,
+	[fsfynbh] [varchar](20) NULL,
+	[fsfyn] [varchar](20) NULL,
+	[fnlbzyzs] [float] NULL,
+	[fszqxy] [varchar](20) NULL,
+	[fszqxn] [varchar](20) NULL,
+	[fxzzzysbh] [varchar](20) NULL,
+	[fxzzzys] [varchar](20) NULL,
+	[fqkyfxyykjwbh] [varchar](20) NULL,
+	[fqkyfxyykjw] [varchar](20) NULL,
+	[fsycxsjxs] [varchar](20) NULL,
+	[flhyyfhbh] [varchar](20) NULL,
+	[flhyyfh] [varchar](20) NULL,
+	[flhyybh] [varchar](20) NULL,
+	[flhyy] [varchar](20) NULL,
+	[fzyqjisyykjywbh] [varchar](50) NULL,
+	[fzyqjisyykjyw] [varchar](50) NULL,
+	[fljddps] [varchar](50) NULL,
+	[fissslcljglbh] [varchar](50) NULL,
+	[fissslcljgl] [varchar](50) NULL,
+	[fiswclcljbh] [varchar](50) NULL,
+	[fiswclclj] [varchar](50) NULL,
+	[ftcyy] [varchar](200) NULL,
+	[fisbybh] [varchar](20) NULL,
+	[fisby] [varchar](20) NULL,
+	[fbyyy] [varchar](100) NULL,
+	[fhzqkbh] [varchar](20) NULL,
+	[fhzqk] [varchar](20) NULL,
+	[fhzqkqt] [varchar](100) NULL,
+	[fjcqkctbh] [varchar](20) NULL,
+	[fjcqkct] [varchar](100) NULL,
+	[fjcqkpetctbh] [varchar](20) NULL,
+	[fjcqkpetct] [varchar](100) NULL,
+	[fjcqksyctbh] [varchar](20) NULL,
+	[fjcqksyct] [varchar](20) NULL,
+	[fjcqkxpbh] [varchar](20) NULL,
+	[fjcqkxp] [varchar](20) NULL,
+	[fjcqkbcbh] [varchar](20) NULL,
+	[fjcqkbc] [varchar](20) NULL,
+	[fjcqkcsxdtbh] [varchar](20) NULL,
+	[fjcqkcsxdt] [varchar](20) NULL,
+	[fjcqkmribh] [varchar](20) NULL,
+	[fjcqkmri] [varchar](20) NULL,
+	[fjcqktwsjc] [varchar](20) NULL,
+	[fqtxhs] [float] NULL,
+	[fjcqktwsjcbh] [varchar](20) NULL,
+	[fbdb] [float] NULL,
+	[fagenew] [varchar](20) NULL,
+	[fzgqk] [varchar](20) NULL,
+	[fckbz] [varchar](2) NULL,
+	[fcfyz] [int] NULL,
+	[fyetb] [varchar](20) NULL,
+	[fplqk] [varchar](4) NULL,
+	[fcfxy] [varchar](4) NULL,
+	[fyetc] [varchar](2) NULL,
+	[fcfcc] [varchar](2) NULL,
+	[fcfys] [varchar](4) NULL,
+	[fchcx] [int] NULL,
+	[frsmdsc] [varchar](4) NULL,
+	[ftxbr] [varchar](2) NULL,
+	[fqztime] [varchar](20) NULL,
+	[fjkdabh] [varchar](200) NULL,
+	[fjdsj] [datetime] NULL,
+	[fgwrs] [varchar](20) NULL,
+	[fgwrsbh] [varchar](20) NULL,
+	[ffmdd] [varchar](200) NULL,
+	[ffmddbh] [varchar](20) NULL,
+	[fcffmfs] [varchar](200) NULL,
+	[fcffmfsbh] [varchar](20) NULL,
+	[ffmrq] [datetime] NULL,
+	[fbajsm] [varchar](200) NULL,
+	[fbdyslbh] [varchar](20) NULL,
+	[fbdysl] [varchar](200) NULL,
+	[FEXTEND16] [varchar](300) NULL,
+	[FEXTEND17] [varchar](300) NULL,
+	[FEXTEND18] [varchar](300) NULL,
+	[FEXTEND19] [varchar](300) NULL,
+	[FEXTEND20] [varchar](300) NULL,
+	[FEXTEND21] [varchar](300) NULL,
+	[FEXTEND22] [varchar](300) NULL,
+	[FEXTEND23] [varchar](300) NULL,
+	[FEXTEND24] [varchar](300) NULL,
+	[FEXTEND25] [varchar](300) NULL,
+	[FEXTEND26] [varchar](300) NULL,
+	[FEXTEND27] [varchar](300) NULL,
+	[FEXTEND28] [varchar](300) NULL,
+	[FEXTEND29] [varchar](300) NULL,
+	[FEXTEND30] [varchar](300) NULL,
+	[FEXTEND31] [varchar](300) NULL,
+	[FEXTEND32] [varchar](300) NULL,
+	[FEXTEND33] [varchar](300) NULL,
+	[FEXTEND34] [varchar](300) NULL,
+	[FEXTEND35] [varchar](300) NULL,
+	[FEXTEND36] [varchar](300) NULL,
+	[FEXTEND37] [varchar](300) NULL,
+	[FEXTEND38] [varchar](300) NULL,
+	[FEXTEND39] [varchar](300) NULL,
+	[FEXTEND40] [varchar](300) NULL,
+	[FEXTEND41] [varchar](300) NULL,
+	[FEXTEND42] [varchar](300) NULL,
+	[FEXTEND43] [varchar](300) NULL,
+	[FEXTEND44] [varchar](300) NULL,
+	[FEXTEND45] [varchar](300) NULL,
+	[fzfje2] [numeric](18, 4) NULL,
+	[fqtzf] [numeric](18, 4) NULL,
+	[FCURRADDRBZ] [varchar](200) NULL,
+	[FHKADDRBZ] [varchar](200) NULL,
+	[FDWADDRBZ] [varchar](200) NULL,
+	[fplqkbh] [varchar](20) NULL,
+	[fsyts] [varchar](20) NULL,
+	[fts] [varchar](20) NULL,
+	[ftsbh] [varchar](20) NULL,
+	[fapgarpf] [varchar](20) NULL,
+	[fifsubmit] [varchar](20) NULL,
+	[FNATIVEBH] [varchar](100) NULL,
+	[fbyyybh] [varchar](20) NULL,
+	[fhyzs] [int] NULL,
+	[fhyts] [int] NULL,
+	[fhycs] [int] NULL,
+	[ftfw] [varchar](50) NULL,
+	[fchcxl] [varchar](50) NULL,
+	[fchcxyy] [varchar](50) NULL,
+	[fshgr] [varchar](50) NULL,
+	[fcqjcczyz] [varchar](50) NULL,
+	[fcqjccs] [varchar](50) NULL,
+	[frzzdz] [varchar](50) NULL,
+	[ffxydzyz] [varchar](50) NULL,
+	[fqtbfz] [varchar](50) NULL,
+	[fcschqk] [varchar](50) NULL,
+	[fxsrtz] [varchar](50) NULL,
+	[fxsrqk] [varchar](50) NULL,
+	[fcs_dxh] [varchar](50) NULL,
+	[ffmfs] [varchar](50) NULL,
+	[ffmfsbh] [varchar](8) NULL,
+	[ftfwbh] [varchar](8) NULL,
+	[fchcxyybh] [varchar](8) NULL,
+	[fcqjcczyzbh] [varchar](8) NULL,
+	[fcqjccsbh] [varchar](8) NULL,
+	[frzzdzbh] [varchar](8) NULL,
+	[fqtbfzbh] [varchar](8) NULL,
+	[fcschqkbh] [varchar](8) NULL,
+	[fxsrtzbh] [varchar](8) NULL,
+	[fxsrqkbh] [varchar](8) NULL,
+	[fzylsh] [varchar](200) NULL,
+	[fiflock] [varchar](20) NULL,
+	[fnlbzyy] [float] NULL,
+	[FCSTZ2] [float] NULL,
+	[FNOIDCARDREASON] [varchar](100) NULL,
+	[FNOIDCARDREASONBH] [int] NULL,
+	[FNOIDCARDOTHER] [varchar](100) NULL,
+	[FCTBLACCO] [varchar](30) NULL,
+	[FCTBLACCOBH] [varchar](30) NULL,
+	[fzktotal] [varchar](255) NULL,
+	[fblhsdate] [datetime] NULL,
+	[fszqxwb] [varchar](100) NULL,
+	[fbirthplacepbh] [varchar](30) NULL,
+	[fbirthplacep] [varchar](200) NULL,
+	[fbirthplacecbh] [varchar](30) NULL,
+	[fbirthplacec] [varchar](200) NULL,
+	[fbirthplacedbh] [varchar](30) NULL,
+	[fbirthplaced] [varchar](200) NULL,
+	[fnativepbh] [varchar](30) NULL,
+	[fnativep] [varchar](200) NULL,
+	[fnativecbh] [varchar](30) NULL,
+	[fnativec] [varchar](200) NULL,
+	[fcurraddrpbh] [varchar](30) NULL,
+	[fcurraddrp] [varchar](200) NULL,
+	[fcurraddrcbh] [varchar](30) NULL,
+	[fcurraddrc] [varchar](200) NULL,
+	[fcurraddrdbh] [varchar](30) NULL,
+	[fcurraddrd] [varchar](200) NULL,
+	[fcurraddrx] [varchar](200) NULL,
+	[fhkaddrpbh] [varchar](30) NULL,
+	[fhkaddrp] [varchar](200) NULL,
+	[fhkaddrcbh] [varchar](30) NULL,
+	[fhkaddrc] [varchar](200) NULL,
+	[fhkaddrdbh] [varchar](30) NULL,
+	[fhkaddrd] [varchar](200) NULL,
+	[fhkaddrx] [varchar](200) NULL,
+	[fdwaddrpbh] [varchar](30) NULL,
+	[fdwaddrp] [varchar](200) NULL,
+	[fdwaddrcbh] [varchar](30) NULL,
+	[fdwaddrc] [varchar](200) NULL,
+	[fdwaddrdbh] [varchar](30) NULL,
+	[fdwaddrd] [varchar](200) NULL,
+	[fdwaddrx] [varchar](200) NULL,
+	[flxaddrpbh] [varchar](30) NULL,
+	[flxaddrp] [varchar](200) NULL,
+	[flxaddrcbh] [varchar](30) NULL,
+	[flxaddrc] [varchar](200) NULL,
+	[flxaddrdbh] [varchar](30) NULL,
+	[flxaddrd] [varchar](200) NULL,
+	[ftz] [float] NULL,
+	[fsxqtlx] [varchar](200) NULL,
+	[flxaddrbh2] [varchar](100) NULL,
+	[flxtele2] [varchar](100) NULL,
+	[flxaddr2] [varchar](300) NULL,
+	[frelate2] [varchar](100) NULL,
+	[flxname2] [varchar](100) NULL,
+	[fxsejbsc] [varchar](20) NULL,
+	[fxsejbscbh] [varchar](20) NULL,
+	[ftpcliabh] [varchar](20) NULL,
+	[ftpclia] [varchar](20) NULL,
+	[fsbhzdxgrbh] [varchar](50) NULL,
+	[fsbhzdxgr] [varchar](100) NULL,
+	[fxgrbh] [varchar](100) NULL,
+	[fxgr] [varchar](100) NULL,
+	[fxgsj] [datetime] NULL,
+	[FLCD] [float] NULL,
+	[FMZXYSXZD] [varchar](200) NULL,
+	[FRYXYSXZD] [varchar](200) NULL,
+	[fphsxzd] [varchar](200) NULL,
+	[fyydm] [varchar](100) NULL,
+	[frycwh] [varchar](20) NULL,
+	[fcycwh] [varchar](20) NULL,
+	[ftjrq] [datetime] NULL,
+	[fupdateRq] [datetime] NULL,
+	[fifceqie] [varchar](20) NULL,
+	[fifceqiebh] [varchar](20) NULL,
+	[FPHZD2] [varchar](1000) NULL,
+	[FPHZDBH2] [varchar](30) NULL,
+	[FPHZDNUM2] [varchar](50) NULL,
+	[fiflhsjlgy] [varchar](20) NULL,
+	[fiflhsjlgybh] [varchar](20) NULL,
+	[fryzlkmbh] [varchar](30) NULL,
+	[fryzlkm] [varchar](30) NULL,
+	[fzkzlkmbh] [varchar](30) NULL,
+	[fzkzlkm] [varchar](30) NULL,
+	[fcyzlkmbh] [varchar](30) NULL,
+	[fcyzlkm] [varchar](30) NULL,
+	[frybqdm] [varchar](20) NULL,
+	[fcybqdm] [varchar](20) NULL,
+	[FJSDOCTBH] [varchar](30) NULL,
+	[FJSDOCT] [varchar](30) NULL,
+	[fphzdbh3] [varchar](30) NULL,
+	[FPHZD3] [varchar](1000) NULL,
+	[FPHZDNUM3] [varchar](50) NULL,
+	[fcybqbh] [varchar](20) NULL,
+	[fcybq] [varchar](100) NULL,
+	[frybqbh] [varchar](20) NULL,
+	[frybq] [varchar](100) NULL,
+	[FHZAQZB] [varchar](100) NULL,
+	[fcstz3] [float] NULL,
+	[fcstz4] [float] NULL,
+	[fcstz5] [float] NULL,
+	[fmzzyzzbh1] [varchar](30) NULL,
+	[fmzzyzz1] [varchar](500) NULL,
+	[fmzzyzzbh2] [varchar](30) NULL,
+	[fmzzyzz2] [varchar](500) NULL,
+	[fjcqkbh] [varchar](10) NULL,
+	[fqjcxsj] [varchar](10) NULL,
+	[ftransdoctbh] [varchar](100) NULL,
+	[ftransdoct] [varchar](200) NULL,
+	[fprintStatus] [int] NULL,
+	[FRYWARDBH] [varchar](500) NULL,
+	[FCYWARDBH] [varchar](500) NULL,
+	[FRYWARD] [varchar](500) NULL,
+	[FCYWARD] [varchar](500) NULL,
+	[FSFBKSZD] [varchar](4) NULL,
+	[FFBKSZDYY] [varchar](1000) NULL,
+	[fwyzlbh] [varchar](4) NULL,
+	[fwyzl] [varchar](8) NULL,
+	[fbw] [numeric](18, 1) NULL,
+	[fbz] [numeric](18, 1) NULL,
+	[ficu] [numeric](18, 1) NULL,
+	[fccu] [numeric](18, 1) NULL,
+	[frc] [int] NULL,
+	[fplaque2] [float] NULL,
+	[fiszssxbh] [varchar](20) NULL,
+	[frylb] [varchar](20) NULL,
+	[flsddw] [varchar](30) NULL,
+	[fqw] [varchar](30) NULL,
+	[fyltx] [varchar](20) NULL,
+	[fsf] [varchar](30) NULL,
+	[fzzzt] [varchar](20) NULL,
+	[fjsxls] [varchar](20) NULL,
+	[fqzdays] [int] NULL,
+	[fxuhao] [int] NULL
+ );
+go
+sleep(8000);
+insert into TPATIENTVISIT(FID,FPRN,FTIMES,FICDVERSION,FBABYNUM,FTWILL,FQJBR,FQJSUC,FTHREQZ,FBACK,FIFZDSS,FIFSS,FIFFYK,FBFZ) values(222,'上海英方',1632,15,0,1,0,1,0,1,0,1,0,1);
+go
+tgt_sql:
+select FID,FPRN,FTIMES,FICDVERSION,FBABYNUM,FTWILL,FQJBR,FQJSUC,FTHREQZ,FBACK,FIFZDSS,FIFSS,FIFFYK,FBFZ from [dbo].[TPATIENTVISIT];
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('TPATIENTVISIT') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('TPATIENTVISIT') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='TPATIENTVISIT'  ORDER BY   c.name,a.name,d.name;
+go
+
+
+case 005 "多外键" 0
+before:
+drop table marks;
+drop table fk_s_t;
+drop table fk_t_t;
+go
+src_sql:
+create table fk_s_t
+(
+s_id int identity(1,1) primary key,
+s_name varchar(20) not null,
+s_age int
+);
+go
+create table fk_t_t
+(
+test_no int identity(1,1),
+test_name varchar(30),
+nax_marks int not null default(0),
+min_marks int not null default(0),
+primary key(test_no,test_name)
+);
+go
+create table marks
+(
+s_id int not null,
+test_no int not null,
+test_name varchar(30),
+marks int not null default(0),
+primary key(s_id,test_no)
+);
+go
+alter table marks add constraint fk_marks_1 foreign key(s_id) references fk_s_t(s_id);
+alter table marks add constraint fk_marks_2 foreign key(test_no,test_name) references fk_t_t(test_no,test_name)
+go
+alter table marks drop constraint fk_marks_1;
+alter table marks drop constraint fk_marks_2;
+go
+alter table marks add constraint fk_marks_1 foreign key(s_id) references fk_s_t(s_id);
+alter table marks add constraint fk_marks_2 foreign key(test_no,test_name) references fk_t_t(test_no,test_name)
+go
+tgt_sql:
+select * from fk_s_t;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_s_t') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_s_t') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='fk_s_t'  ORDER BY   c.name,a.name,d.name;
+select * from fk_t_t;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_t_t') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_t_t') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='fk_t_t'  ORDER BY   c.name,a.name,d.name;
+select * from marks;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('marks') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('marks') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='marks'  ORDER BY   c.name,a.name,d.name;
+go
+
+case 006 "循环依赖外键" 0
+before:
+alter table fk_test9 drop constraint fk_t9fk;
+alter table fk_test8 drop constraint fk_t8fk;
+alter table fk_test7 drop constraint fk_t7fk;
+alter table fk_test6 drop constraint fk_t6fk;
+alter table fk_test5 drop constraint fk_t5fk;
+alter table fk_test4 drop constraint fk_t4fk;
+alter table fk_test3 drop constraint fk_t3fk;
+alter table fk_test2 drop constraint fk_t2fk;
+alter table fk_test1 drop constraint fk_t1fk;
+drop table fk_test1;
+drop table fk_test2;
+drop table fk_test3;
+drop table fk_test4;
+drop table fk_test5;
+drop table fk_test6;
+drop table fk_test7;
+drop table fk_test8;
+drop table fk_test9;
+go
+src_sql:
+create table fk_test1(i int primary key, j int not null, c char(10));
+create table fk_test2(i int primary key, j int not null, c char(10));
+create table fk_test3(i int primary key, j int not null, c char(10));
+create table fk_test4(i int primary key, j int not null, c char(10));
+create table fk_test5(i int primary key, j int not null, c char(10));
+create table fk_test6(i int primary key, j int not null, c char(10));
+create table fk_test7(i int primary key, j int not null, c char(10));
+create table fk_test8(i int primary key, j int not null, c char(10));
+create table fk_test9(i int primary key, j int not null, c char(10));
+alter table fk_test2 add constraint fk_t2fk foreign key (j) references fk_test1(i);
+alter table fk_test3 add constraint fk_t3fk foreign key (j) references fk_test2(i);
+alter table fk_test4 add constraint fk_t4fk foreign key (j) references fk_test3(i);
+alter table fk_test5 add constraint fk_t5fk foreign key (j) references fk_test4(i);
+alter table fk_test6 add constraint fk_t6fk foreign key (j) references fk_test5(i);
+alter table fk_test7 add constraint fk_t7fk foreign key (j) references fk_test6(i);
+alter table fk_test8 add constraint fk_t8fk foreign key (j) references fk_test7(i);
+alter table fk_test9 add constraint fk_t9fk foreign key (j) references fk_test8(i);
+alter table fk_test1 add constraint fk_t1fk foreign key (j) references fk_test9(i);
+go
+alter table fk_test9 drop constraint fk_t9fk;
+alter table fk_test8 drop constraint fk_t8fk;
+alter table fk_test7 drop constraint fk_t7fk;
+alter table fk_test6 drop constraint fk_t6fk;
+alter table fk_test5 drop constraint fk_t5fk;
+alter table fk_test4 drop constraint fk_t4fk;
+alter table fk_test3 drop constraint fk_t3fk;
+alter table fk_test2 drop constraint fk_t2fk;
+alter table fk_test1 drop constraint fk_t1fk;
+go
+alter table fk_test2 add constraint fk_t2fk foreign key (j) references fk_test1(i);
+alter table fk_test3 add constraint fk_t3fk foreign key (j) references fk_test2(i);
+alter table fk_test4 add constraint fk_t4fk foreign key (j) references fk_test3(i);
+alter table fk_test5 add constraint fk_t5fk foreign key (j) references fk_test4(i);
+alter table fk_test6 add constraint fk_t6fk foreign key (j) references fk_test5(i);
+alter table fk_test7 add constraint fk_t7fk foreign key (j) references fk_test6(i);
+alter table fk_test8 add constraint fk_t8fk foreign key (j) references fk_test7(i);
+alter table fk_test9 add constraint fk_t9fk foreign key (j) references fk_test8(i);
+alter table fk_test1 add constraint fk_t1fk foreign key (j) references fk_test9(i);
+go
+tgt_sql:
+select * from fk_test1;
+select * from fk_test2;
+select * from fk_test3;
+select * from fk_test4;
+select * from fk_test5;
+select * from fk_test6;
+select * from fk_test7;
+select * from fk_test8;
+select * from fk_test9;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test1') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test1') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test2') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test2') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test3') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test3') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test4') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test4') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test5') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test5') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test6') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test6') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test7') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test7') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test8') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test8') order by name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('fk_test9') order by name;
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('fk_test9') order by name;
+go
+
+case 007 "sparse" 0
+before:
+drop table sparsetable2;
+go
+src_sql:
+create table sparsetable2(
+no varchar(36) not null primary key,
+c_char char(20) sparse,
+c_nchar nchar(20) sparse,
+c_varchar varchar(40) sparse,
+c_nvarchar nvarchar(1000) sparse,
+c_varcharm varchar(max) sparse,
+c_nvarcharm nvarchar(max) sparse,
+c_int int sparse,
+c_tinyint tinyint sparse,
+c_smallint smallint sparse,
+c_bigint bigint sparse,
+c_decimal decimal(15,10) sparse,
+c_numeric numeric(10,4) sparse,
+c_float float sparse,
+c_real real sparse,
+c_money money sparse,
+c_smallmoney smallmoney sparse,
+c_bit bit sparse,
+c_date date sparse,
+c_time time(0) sparse,
+c_datetime  datetime sparse,
+c_datetime2 datetime2(1) sparse,
+c_smalldatetime smalldatetime sparse,
+c_datetimeoffset datetimeoffset(0) sparse,
+c_binary binary(50) sparse,
+c_varbinary varbinary(100) sparse,
+c_varbinarym varbinary(max) sparse,
+c_xml xml sparse,
+c_uniqueidentifier uniqueidentifier sparse,
+c_variant sql_variant sparse,
+c_clr hierarchyid sparse
+);
+sleep(8000);
+insert into  sparsetable2 values(newid(),null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null);
+insert into  sparsetable2 values(newid(),'地址41','地址42','地址43',null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null);
+update sparsetable2 set c_variant='this is a testcase';
+update sparsetable2 set c_char='测试',c_varbinary=0xffff;
+update sparsetable2 set c_nchar='上海',c_varchar='英方软件股份有限公司',c_nvarchar='上海英方软件股份有限公司北京分公司',c_varcharm='杭州分公司',c_nvarcharm='深圳分公司',c_int=-123456,c_tinyint=99,c_smallint=-32768,c_bigint=-9808,c_decimal=-7156.000000008,c_numeric=-176543.2398,c_float=-300.12,c_real=-109.6789,c_money=-110.23,c_smallmoney=-101.45,c_bit=1;
+update sparsetable2 set c_date=convert(date,'2020-08-31'),c_time=convert(time,SYSDATETIME()),c_datetime=convert(datetime,'1998-12-12 14:31:56.013',20),c_datetime2=convert(datetime2,'2047-06-01 20:51:24.00199',21),c_smalldatetime=convert(smalldatetime,'2001-12-05 12:02:20',20),c_datetimeoffset=CONVERT (datetimeoffset,SYSDATETIMEOFFSET())
+update sparsetable2 set c_binary=0x3f,c_varbinary=0x2abcd345,c_varbinarym=0x123456789123456789123456789;
+update sparsetable2 set c_xml='<Root>
+<Location LocationID="40"
+LaborHours="4.1"
+MachineHours=".2" >
+<step>Manufacturing step 1 at this work center</step>
+<step>Manufacturing step 2 at this work center</step>
+ Manufacturing steps are described here.
+</Location>
+</Root>';
+update sparsetable2 set c_uniqueidentifier='6F9619FF-8B86-D011-B42D-00C04FC964BB',c_clr='/-1/-2.3/-3.-999/';
+go
+ALTER TABLE dbo.sparsetable2 ADD c_addcol1 VARCHAR(max) sparse;
+ALTER TABLE dbo.sparsetable2 ADD c_addcol2 sql_variant sparse,c_addcol3 decimal(20,12) sparse;
+ALTER TABLE dbo.sparsetable2 ADD c_addcol4 datetime2(0) sparse,c_addcol5 bit sparse,c_addcol6 xml sparse;
+insert into  sparsetable2(no,c_addcol1,c_addcol6) values(newid(),'  ',
+'<Root>
+<Location LocationID="40"
+LaborHours="4.1"
+MachineHours=".2" >
+<step>Manufacturing step 1 at this work center</step>
+<step>Manufacturing step 2 at this work center</step>
+ Manufacturing steps are described here.
+</Location>
+</Root>');
+ALTER TABLE dbo.sparsetable2 drop column c_variant,c_addcol4;
+exec sp_rename 'dbo.sparsetable2.c_addcol2','c_variant','COLUMN';
+alter table dbo.sparsetable2 alter column c_addcol3 decimal(25,15);
+alter table dbo.sparsetable2 alter column c_addcol3 decimal(25,15) sparse;
+alter table dbo.sparsetable2 alter column c_int bigint;
+go
+tgt_sql:
+select no,c_char,c_nchar,c_varchar,c_nvarchar,c_varcharm,c_nvarcharm,c_int,c_tinyint,c_smallint,c_decimal,c_numeric,c_float,c_real,c_money,c_smallmoney,c_bit,c_date,c_time,c_datetime,c_datetime2,c_smalldatetime,c_datetimeoffset,c_binary,c_varbinary,c_varbinarym,c_xml,c_uniqueidentifier,convert(varchar(30),c_variant),c_clr from sparsetable2;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('sparsetable2');
+select name,is_sparse from sys.columns where object_id=OBJECT_ID('sparsetable2');
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('sparsetable2') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='sparsetable2'  ORDER BY   c.name,a.name,d.name;
+go
+
+case 008 "末尾空字符串，影响sparse数据解析" 0
+before:
+drop table sparsetest1;
+drop table sparsetest2;
+drop table sparsetest3;
+go
+src_sql:
+create table sparsetest1(
+	i int primary key,
+	vc1 varchar(20),
+	vc2 varchar(20),
+	vc3 varchar(20),
+	vc4 varchar(20),
+	dt datetime sparse,
+	txt text,
+	vc6 varchar(20),
+	vc7 varchar(20),
+	vc8 varchar(20)
+);
+ALTER TABLE [dbo].sparsetest1 ADD  CONSTRAINT [DFsparsetest1_vc1]  DEFAULT ('') FOR vc1;
+ALTER TABLE [dbo].sparsetest1 ADD  CONSTRAINT [DFsparsetest1_vc3]  DEFAULT ('') FOR vc3;
+ALTER TABLE [dbo].sparsetest1 ADD  CONSTRAINT [DFsparsetest1_vc6]  DEFAULT ('') FOR vc6;
+ALTER TABLE [dbo].sparsetest1 ADD  CONSTRAINT [DFsparsetest1_vc7]  DEFAULT ('') FOR vc7;
+create table sparsetest2(i int primary key,
+	vc1 varchar(10),
+	vc2 varchar(10),
+	vc3 varchar(10) sparse);
+create table sparsetest3(i int primary key,vc1 varchar(20),vc2 varchar(20),dt datetime sparse,vc3 varchar(30));
+create nonclustered index NonClu_Index1 on sparsetest3(dt);
+sleep(8000);
+insert into sparsetest3 values(1,'','',GETDATE(),'');
+insert into sparsetest3 values(2,'','',GETDATE(),'');
+insert into sparsetest2 values(17,'',NULL,'111');
+insert into sparsetest2 values(14,'',NULL,'111');
+insert into sparsetest2 values(15,'','','111');
+insert into sparsetest2 values(16,NULL,'','111');
+insert into sparsetest1(i,vc4,txt) values(1,'111','12345');
+insert into sparsetest1(i,vc4,txt) values(2,'222','22345');
+insert into sparsetest1(i,vc4,dt) values(3,'333',getdate());
+go
+tgt_sql:
+select * from sparsetest1;
+select * from sparsetest2;
+select * from sparsetest3;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('sparsetest1');
+select name,is_sparse from sys.columns where object_id=OBJECT_ID('sparsetest1');
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('sparsetest1') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='sparsetest1'  ORDER BY   c.name,a.name,d.name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('sparsetest2');
+select name,is_sparse from sys.columns where object_id=OBJECT_ID('sparsetest2');
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('sparsetest2') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='sparsetest2'  ORDER BY   c.name,a.name,d.name;
+select name,xtype,length,isnullable from sys.syscolumns where id = OBJECT_ID('sparsetest3');
+select name,is_sparse from sys.columns where object_id=OBJECT_ID('sparsetest3');
+select name,xtype from sys.sysobjects where parent_obj= OBJECT_ID('sparsetest3') order by name;
+select 索引名称=a.name ,表名=c.name ,索引字段名=d.name ,索引字段位置=d.colid  FROM  sysindexes   a JOIN   sysindexkeys   b   ON   a.id=b.id   AND   a.indid=b.indid JOIN   sysobjects   c   ON   b.id=c.id  JOIN   syscolumns   d   ON   b.id=d.id   AND   b.colid=d.colid WHERE   a.indid   NOT IN(0,255) AND   c.name='sparsetest3'  ORDER BY   c.name,a.name,d.name;
+go
