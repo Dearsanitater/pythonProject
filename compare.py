@@ -754,6 +754,9 @@ class ergodic_database():
         return columns_info
     #oracle/postgre/mysql
     def cons_analysis(self, table_name,col_num,n):#加类型参数
+        import threading
+        print('当前线程：',threading.current_thread().name,'正在获取：',table_name,'端内容')
+        start = stime.monotonic()
         columns_info = [];dbname=''
         if n == 'src' and self.conf_src not in self.db2:
             cursor = self.conn_src.cursor()
@@ -1329,7 +1332,9 @@ class ergodic_database():
                         else:d['unique_name']=None;d['unique_complex']=None;d['index_name']=line[0];d['index_type']=line[3];d['index_complex']=complex
 
             pass
-
+        end = stime.monotonic()
+        duration = end - start
+        print(f"{n}:{table_name}列信息获取耗时: {duration * 1000:.2f}毫秒")
         return columns_info
     def cons_compare(self,tgt,src):#字段为单位追加至self.bfe
         col_result=[]
@@ -2134,6 +2139,7 @@ class ergodic_database():
             print('源端共计 %d个表，备端共计 %d个表'%(src[0],tgt[0]))
             self.bfe_last.append('源端共计 %d个表，备端共计 %d个表'%(src[0],tgt[0]))
         for y in src[1]:
+            start=stime.monotonic()
             a,y=self.search_dicts(tgt[1],'tab_name',y['tab_name'].upper(),y)#源备表名列表可能乱序，按源端表名匹配
             self.bfe.append(y['tab_name'])
             if a:
@@ -2142,12 +2148,21 @@ class ergodic_database():
                     print('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(y['tab_name'],len(y['tab_col']),len(a)))
                     self.bfe.append('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(y['tab_name'],len(y['tab_col']),len(a)))
                     self.col_compair(y['tab_col'],a)##比对字段属性
-                    #单进程
                     if self.tgt_db_t != 'hbase':
-                        order_col=self.cons_compare(
-                            self.cons_analysis(y['tab_name'], len(a), 'tgt'),
-                            self.cons_analysis(y['tab_name'], len(a), 'src'))
-                    else:
+                        # order_col=self.cons_compare(
+                        #     self.cons_analysis(y['tab_name'], len(a), 'tgt'),
+                        #     self.cons_analysis(y['tab_name'], len(a), 'src'))
+                        #多线程
+                        from concurrent.futures import ThreadPoolExecutor, as_completed
+                        from typing import List, Dict, Any
+                        tmp_tuple=[]#tuple(list, list)
+                        futures=[]
+                        tmp_list=['tgt','src']
+                        with ThreadPoolExecutor(max_workers=len(tmp_list)) as ex:
+                            for result in ex.map(lambda res: self.cons_analysis(y['tab_name'], len(a), res), tmp_list):
+                                tmp_tuple.append(result)
+                        order_col=self.cons_compare(tmp_tuple[0],tmp_tuple[1])
+                    else:#hbase表字段数可能不一致，暂不考虑字段顺序问题，直接按源端字段顺序比对内容
                         order_col = self.cons_compare(
                             self.cons_analysis(y['tab_name'], len(a), 'src'),
                             self.cons_analysis(y['tab_name'], len(a), 'src'))
@@ -2170,6 +2185,7 @@ class ergodic_database():
                 self.bfe.append('！备端查无该表 %s'%y['tab_name'])
             self.bfe_last.append(self.bfe)
             self.bfe=[]
+            print('比对完成，耗时%.2f毫秒'%((stime.monotonic()-start)*1000))
         #打表
         # self.xlsx(self.bfe_last)
         #print(self.bfe_last)
@@ -2183,40 +2199,34 @@ class ergodic_database():
             f.write(cons)
         with open('resource/test_report/err.txt','w+',encoding='utf-8') as f:
             f.write(str(self.cons_err))
-if __name__ == '__main__':#手动调试
+
+if __name__ == '__main__':#refact
     src = 'mssql##';tgt = 'doris2';err_handling = 3;if_cpdata=0#9.0常用 mysql##/oracle/mssql##
-    #compare.exe <src_db> <tgt_db> <是否内容比较 1 on 0 off>
-    #cmd命令行调用
-    #if len(sys.argv) != 4:
-    #     print("用法: compare.exe <src_db> <tgt_db> <是否内容比较 1 on 0 off>")
-    #     sys.exit(1)
-    #
-    # src = sys.argv[1]
-    # tgt = sys.argv[2]
-    # if_cpdata=int(sys.argv[3])
-    #err_handling  1：自动忽略所有无主键，2：忽略所有出错表，3：忽略所有问题表，4：手动选择
-    #if_cpdata 1:比较内容，0 不比较内容
+    
+    import opg_refactor as opgr
+    import compare_refactor as cr
+    p=cr.ergodic_database()
+    dump_excel=ergodic.get_casefile()
+    p.compare(src,tgt,err_handling,if_cpdata)
+    p.dump_e(dump_excel)
+if __name__ == '__main__1':#手动调试
+    src = 'mssql##';tgt = 'doris2';err_handling = 3;if_cpdata=0#9.0常用 mysql##/oracle/mssql##
     p=ergodic_database()
     dump_excel=ergodic.get_casefile()
     p.compare(src,tgt,err_handling,if_cpdata)
     p.dump_e(dump_excel)
-#打包主函数
-if __name__ == '__main__':
-        # src = 'sqlserver01';tgt = 'mysql';err_handling = 3;if_cpdata = 1
-        # cmd命令行调用
-        print('Start:')
-        if len(sys.argv) != 4:
-            print("用法: compare.exe <src_db> <tgt_db> <是否内容比较 1 on 0 off>")
-            sys.exit(1)
-
-        src = sys.argv[1]
-        tgt = sys.argv[2]
-        if_cpdata=int(sys.argv[3])
-        err_handling = 3
-        # err_handling  1：自动忽略所有无主键，2：忽略所有出错表，3：忽略所有问题表，4：手动选择
-        # if_cpdata 1:比较内容，0 不比较内容
-        p = ergodic_database()
-        dump_excel = ergodic.get_casefile()
-        p.compare(src, tgt, err_handling, if_cpdata)
-        p.dump_e(dump_excel)
-    #p.map_analysis(compare_file)
+if __name__ == '__main__2':#命令行调试cmd命令行调用
+    print('Start:')
+    if len(sys.argv) != 4:
+        print("用法: compare.exe <src_db> <tgt_db> <是否内容比较 1 on 0 off>")
+        sys.exit(1)
+    src = sys.argv[1]
+    tgt = sys.argv[2]
+    if_cpdata=int(sys.argv[3])
+    err_handling = 3
+    # err_handling  1：自动忽略所有无主键，2：忽略所有出错表，3：忽略所有问题表，4：手动选择
+    # if_cpdata 1:比较内容，0 不比较内容
+    p = ergodic_database()
+    dump_excel = ergodic.get_casefile()
+    p.compare(src, tgt, err_handling, if_cpdata)
+    p.dump_e(dump_excel)
