@@ -1,7 +1,7 @@
 import time
 
 from .config import get_db_config, get_db_type, get_section_for_key
-from .sessions import Db2Session, DbSession
+from .sessions import Db2Session, DbSession, ThreadLocalSessionProxy
 
 
 class ConnectionFactory:
@@ -28,6 +28,11 @@ class ConnectionFactory:
         if db_type not in builders:
             raise KeyError(f"Unsupported database type '{db_type}' for '{db_key}'")
         return builders[db_type](section, db_type, params)
+
+    def create_thread_local(self, db_key, explicit_type=None):
+        return ThreadLocalSessionProxy(
+            session_factory=lambda: self.create(db_key, explicit_type=explicit_type)
+        )
 
     def _section_dict(self, section):
         return {key: self.config.get(section, key) for key in self.config.options(section)}

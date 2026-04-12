@@ -1,3 +1,6 @@
+import threading
+
+
 class DbSession:
     def __init__(self, connection, db_key, db_type):
         self.connection = connection
@@ -120,3 +123,76 @@ class Db2Session(DbSession):
             return ibm_db.close(self.connection)
         except Exception:
             return None
+
+
+class ThreadLocalSessionProxy:
+    is_thread_local_proxy = True
+
+    def __init__(self, session_factory):
+        self._session_factory = session_factory
+        self._local = threading.local()
+        self._sessions = {}
+        self._lock = threading.Lock()
+
+    def _current_session(self):
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = self._session_factory()
+            self._local.session = session
+            with self._lock:
+                self._sessions[threading.get_ident()] = session
+        return session
+
+    @property
+    def raw_connection(self):
+        session = self._current_session()
+        return getattr(session, "raw_connection", session)
+
+    def cursor(self):
+        return self._current_session().cursor()
+
+    def execute(self, sql, params=None):
+        return self._current_session().execute(sql, params)
+
+    def executemany(self, sql, params):
+        return self._current_session().executemany(sql, params)
+
+    def fetchall(self):
+        return self._current_session().fetchall()
+
+    def fetchone(self):
+        return self._current_session().fetchone()
+
+    def commit(self):
+        return self._current_session().commit()
+
+    def rollback(self):
+        return self._current_session().rollback()
+
+    def autocommit(self, enabled):
+        return self._current_session().autocommit(enabled)
+
+    def close(self):
+        session = getattr(self._local, "session", None)
+        if session is None:
+            return None
+        try:
+            return session.close()
+        finally:
+            with self._lock:
+                self._sessions.pop(threading.get_ident(), None)
+            self._local.session = None
+
+    def close_all(self):
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
+            try:
+                session.close()
+            except Exception:
+                pass
+        self._local.session = None
+
+    def __getattr__(self, item):
+        return getattr(self._current_session(), item)

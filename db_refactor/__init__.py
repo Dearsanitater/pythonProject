@@ -7,12 +7,13 @@ from .config import (
 )
 from .factory import ConnectionFactory
 from .schema import DialectRegistry, SchemaSnapshot
-from .sessions import Db2Session, DbSession
+from .sessions import Db2Session, DbSession, ThreadLocalSessionProxy
 
 __all__ = [
     "ConnectionFactory",
     "Db2Session",
     "DbSession",
+    "ThreadLocalSessionProxy",
     "DialectRegistry",
     "SchemaSnapshot",
     "get_compare_config",

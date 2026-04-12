@@ -1,6 +1,8 @@
 # coding=utf-8
 import json,re,pandas,configparser,sys,decimal,copy,requests,opg,cx_Oracle,ergodic,numpy,datetime,chardet,os
 import time as stime
+import threading
+from contextlib import ExitStack
 from hdfs import InsecureClient
 import pyarrow.parquet as pq
 import pyarrow as pa
@@ -12,18 +14,25 @@ from decimal import Decimal
 from shapely import wkb
 from shapely.wkt import dumps
 import struct
-
+from queue import Queue
 from collections import defaultdict
 import multiprocessing
 from threading import Thread
+from concurrent.futures import ThreadPoolExecutor, as_completed
 config = configparser.RawConfigParser()
 config2 = configparser.RawConfigParser()
 config.read(r'resource/compare.ini', encoding='utf-8')
 config2.read(r'resource/config.ini', encoding='utf-8')
 compare_file=r'resource/mapping.xlsx'
 #pandas.set_option('display.encoding', 'gbk')
+
+
 class ergodic_database():
     def __init__(self):
+        self._thread_state = threading.local()
+        self._conn_src_lock = threading.Lock()
+        self._conn_tgt_lock = threading.Lock()
+        self._type_cache_lock = threading.Lock()
         self.src_db=''
         self.tgt_db=''
         self.conf_src=''
@@ -78,6 +87,60 @@ class ergodic_database():
         self.ob_mode=None
         #multi
         #self.pool=multiprocessing.Pool()
+
+    @property
+    def bfe(self):
+        return getattr(self._thread_state, 'bfe', [])
+
+    @bfe.setter
+    def bfe(self, value):
+        self._thread_state.bfe = value
+
+    @property
+    def ora_search_cloumn(self):
+        return getattr(self._thread_state, 'ora_search_cloumn', None)
+
+    @ora_search_cloumn.setter
+    def ora_search_cloumn(self, value):
+        self._thread_state.ora_search_cloumn = value
+
+    @property
+    def esl(self):
+        return getattr(self._thread_state, 'esl', [])
+
+    @esl.setter
+    def esl(self, value):
+        self._thread_state.esl = value
+
+    def _reset_compare_context(self, table_name=None):
+        self.bfe = [table_name] if table_name else []
+        self.ora_search_cloumn = None
+        self.esl = []
+
+    @staticmethod
+    def _is_thread_safe_session(session):
+        return bool(getattr(session, 'is_thread_local_proxy', False))
+
+    def _run_cons_analysis(self, table_name, col_num, role):
+        if role == 'src':
+            if self._is_thread_safe_session(self.conn_src):
+                return self.cons_analysis(table_name, col_num, role)
+            with self._conn_src_lock:
+                return self.cons_analysis(table_name, col_num, role)
+        if role == 'tgt' and self.conf_tgt not in ('elastic', 'hdfs'):
+            if self._is_thread_safe_session(self.conn_tgt):
+                return self.cons_analysis(table_name, col_num, role)
+            with self._conn_tgt_lock:
+                return self.cons_analysis(table_name, col_num, role)
+        return self.cons_analysis(table_name, col_num, role)
+
+    def _run_row_contain(self, tbname, tbcol, tgcol, order_col, ora_search_column=None):
+        with ExitStack() as stack:
+            if self.conn_src is not None and not self._is_thread_safe_session(self.conn_src):
+                stack.enter_context(self._conn_src_lock)
+            if self.conn_tgt is not None and self.conf_tgt not in ('elastic', 'hdfs', 'hbase') and not self._is_thread_safe_session(self.conn_tgt):
+                stack.enter_context(self._conn_tgt_lock)
+            return self.row_contain(self.conn_src, self.conn_tgt, tbname, tbcol, tgcol, order_col, ora_search_column)
     def src_tab(self,source,ty):#mssql
         i=j=k=0
         #print(os.getcwd(),config.sections())
@@ -754,7 +817,7 @@ class ergodic_database():
         return columns_info
     #oracle/postgre/mysql
     def cons_analysis(self, table_name,col_num,n):#加类型参数
-        import threading
+        
         print('当前线程：',threading.current_thread().name,'正在获取：',table_name,'端内容')
         start = stime.monotonic()
         columns_info = [];dbname=''
@@ -1417,15 +1480,16 @@ class ergodic_database():
             tab_cons.append(col_result)
             col_result=[]
 
-        self.col_result.append(tab_cons)
         final_diff_cons.append(diff_cons)
-        return final_diff_cons
+        return final_diff_cons, tab_cons
         #print(self.col_result)
-    def row_contain(self,src,tgt,tbname,tbcol,tgcol,order_col):#行数、内容比较
-        src_cur=self.conn_src.cursor()
+    def row_contain(self,src,tgt,tbname,tbcol,tgcol,order_col,ora_search_column=None):#行数、内容比较
+        src_conn = src or self.conn_src
+        tgt_conn = tgt or self.conn_tgt
+        src_cur=src_conn.cursor()
         #datetime_tuple=(datetime.time,datetime.datetime)
         if self.conf_tgt not in ('elastic','hdfs','hbase'):
-            tgt_cur = self.conn_tgt.cursor()
+            tgt_cur = tgt_conn.cursor()
         else:
             tgt_cur=None
         err=[]
@@ -1445,7 +1509,7 @@ class ergodic_database():
         elif self.conf_src=='postgre':
             sql=f'select * from {tbname}'
         elif self.conf_src=='oracle':
-            sql=config.get('oracle','row').format(columns=self.ora_search_cloumn,tbname=tbname)
+            sql=config.get('oracle','row').format(columns=ora_search_column or self.ora_search_cloumn,tbname=tbname)
             odsql=odsql.upper()
         else:
             sql=f'select * from {tbname}'
@@ -1759,7 +1823,7 @@ class ergodic_database():
         else :print('~ 空表') ;self.bfe.append('~ 空表')
         #print(s,'\n',t,s.equals(t))
         print(err)
-        self.cons_err.append(err)
+        return err
     def mss_spc(self,tgcol,tbname):
         f=[];i=0
         cur=self.conn_src.cursor()
@@ -2044,7 +2108,7 @@ class ergodic_database():
                 tmp.append(scol['col_name'])
             else:tmp.append(f"cast({scol['col_name']} as varchar(50))")
         self.ora_search_cloumn=(',').join(tmp)
-        #print(self.ora_search_cloumn)
+        return self.ora_search_cloumn
     def dump_e(self,dmp):
         dump_excel=dmp
         #a = input('press a to dump infomation to EXCEL right now \t or \t press x exit go model ergodic operator later')
@@ -2108,9 +2172,15 @@ class ergodic_database():
         self.tgt_db=tgt
         self.src_db_t = config2.get(f'{self.src_db}', 'type')#根据输入的数据库具体名找config中对应的type值，可加try优化报错
         self.tgt_db_t = config2.get(f'{self.tgt_db}', 'type')
+        self._reset_compare_context()
+        self.bfe_last=[]
+        self.col_result=[]
+        self.cons_err=[]
         self.isom=[]
         self.np_value=err_handling#1：自动忽略所有无主键，2：忽略所有出错表，3：忽略所有问题表，4：手动选择
         self.map_analysis(compare_file)
+        concurrency=4#并发度
+        tmp_tb_list=[]
         src,tgt=self.define_type()
         if src[0]!= tgt[0]:
             xsrc=[]
@@ -2138,57 +2208,35 @@ class ergodic_database():
         else:
             print('源端共计 %d个表，备端共计 %d个表'%(src[0],tgt[0]))
             self.bfe_last.append('源端共计 %d个表，备端共计 %d个表'%(src[0],tgt[0]))
-        for y in src[1]:
-            start=stime.monotonic()
-            a,y=self.search_dicts(tgt[1],'tab_name',y['tab_name'].upper(),y)#源备表名列表可能乱序，按源端表名匹配
-            self.bfe.append(y['tab_name'])
-            if a:
-                #if len(a)==len(y['tab_col']) or len(a)+1==len(y['tab_col']):
-                if len(a) == len(y['tab_col']) or (self.tgt_db_t=='hbase' and len(a)<len(y['tab_col'])):
-                    print('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(y['tab_name'],len(y['tab_col']),len(a)))
-                    self.bfe.append('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(y['tab_name'],len(y['tab_col']),len(a)))
-                    self.col_compair(y['tab_col'],a)##比对字段属性
-                    if self.tgt_db_t != 'hbase':
-                        # order_col=self.cons_compare(
-                        #     self.cons_analysis(y['tab_name'], len(a), 'tgt'),
-                        #     self.cons_analysis(y['tab_name'], len(a), 'src'))
-                        #多线程
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
-                        from typing import List, Dict, Any
-                        tmp_tuple=[]#tuple(list, list)
-                        futures=[]
-                        tmp_list=['tgt','src']
-                        with ThreadPoolExecutor(max_workers=len(tmp_list)) as ex:
-                            for result in ex.map(lambda res: self.cons_analysis(y['tab_name'], len(a), res), tmp_list):
-                                tmp_tuple.append(result)
-                        order_col=self.cons_compare(tmp_tuple[0],tmp_tuple[1])
-                    else:#hbase表字段数可能不一致，暂不考虑字段顺序问题，直接按源端字段顺序比对内容
-                        order_col = self.cons_compare(
-                            self.cons_analysis(y['tab_name'], len(a), 'src'),
-                            self.cons_analysis(y['tab_name'], len(a), 'src'))
-                    if if_cpdata==1:
-                        self.row_contain(self.conn_src,self.conn_tgt,y['tab_name'],y['tab_col'],a,order_col)##内容比较
-
-                    #多进程
-                    # ctx = multiprocessing.get_context('spawn')
-                    # T1=ctx.Process(target=self.cons_analysis,args=(table_name,length))
-                    # T2=ctx.Process(target=self.src_cons_ana,args=(table_name,length))
-                elif self.src_db_t=='hbase':
-                    #self.row_contain()
-                    pass
-
+        
+        def pre_compare(src,tgt):
+            for y in src[1]:
+                a,y=self.search_dicts(tgt[1],'tab_name',y['tab_name'].upper(),y)#源备表名列表可能乱序，按源端表名匹配
+                table_log=[y['tab_name']]
+                if a:
+                    tmp_tb_list.append((y['tab_name'],a,y['tab_col']))
                 else:
-                    print('\033[0;34m ！ \033[0m%s\t源备字段数不同，源端字段：%d \t备端字段%d'%(y['tab_name'],len(y['tab_col']),len(a)))
-                    self.bfe.append('！ %s\t源备字段数不同，源端字段：%d \t备端字段%d'%(y['tab_name'],len(y['tab_col']),len(a)))
-            else:
-                print('\033[0;34m ！ \033[0m备端查无该表 %s'%y['tab_name'])
-                self.bfe.append('！备端查无该表 %s'%y['tab_name'])
-            self.bfe_last.append(self.bfe)
-            self.bfe=[]
-            print('比对完成，耗时%.2f毫秒'%((stime.monotonic()-start)*1000))
-        #打表
+                    print('\033[0;34m ！ \033[0m备端查无该表 %s'%y['tab_name'])
+                    table_log.append('！备端查无该表 %s'%y['tab_name'])
+                    self.bfe_last.append(table_log)
+            return tmp_tb_list
+
+        tasklist=pre_compare(src,tgt)
+        with ThreadPoolExecutor(max_workers=concurrency) as cons_data_tp:
+            futures = [
+                cons_data_tp.submit(self.cons_data_compare, tab_name, a, tab_col, if_cpdata)
+                for tab_name, a, tab_col in tasklist
+            ]
+            for fut in futures:
+                result = fut.result()
+                self.bfe_last.append(result['messages'])
+                if result['col_result'] is not None:
+                    self.col_result.append(result['col_result'])
+                if result['cons_err'] is not None:
+                    self.cons_err.append(result['cons_err'])
         # self.xlsx(self.bfe_last)
         #print(self.bfe_last)
+        #打表
         report=json.dumps(self.bfe_last,ensure_ascii=False)
         cons=json.dumps(self.col_result,ensure_ascii=False)
         #err=json.dumps(self.cons_err,ensure_ascii=False)
@@ -2199,17 +2247,48 @@ class ergodic_database():
             f.write(cons)
         with open('resource/test_report/err.txt','w+',encoding='utf-8') as f:
             f.write(str(self.cons_err))
-
+    def cons_data_compare(self,tab_name,a,tab_col,if_cpdata=0):
+            start=stime.monotonic()
+            self._reset_compare_context(tab_name)
+            table_col_result = None
+            table_cons_err = None
+            print(f'表 {tab_name} 开始比对')
+            if len(a) == len(tab_col) or (self.tgt_db_t=='hbase' and len(a)<len(tab_col)):
+                print('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
+                self.bfe.append('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
+                ora_search_column = self.col_compair(tab_col,a)#比对字段属性
+                if self.tgt_db_t != 'hbase':
+                    tgt_cons = self._run_cons_analysis(tab_name, len(a), 'tgt')
+                    src_cons = self._run_cons_analysis(tab_name, len(a), 'src')
+                    order_col, table_col_result = self.cons_compare(tgt_cons, src_cons)
+                else:#hbase表字段数可能不一致，暂不考虑字段顺序问题，直接按源端字段顺序比对内容
+                    src_cons = self._run_cons_analysis(tab_name, len(a), 'src')
+                    order_col, table_col_result = self.cons_compare(src_cons, src_cons)
+                if if_cpdata==1:
+                    table_cons_err = self._run_row_contain(tab_name,tab_col,a,order_col,ora_search_column)
+            elif self.src_db_t=='hbase':
+                pass
+            else:
+                print('\033[0;34m ！ \033[0m%s\t源备字段数不同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
+                self.bfe.append('！ %s\t源备字段数不同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
+            print('表 %s 比对完成，耗时%.2f毫秒'%(tab_name, (stime.monotonic()-start)*1000))
+            return {
+                'messages': list(self.bfe),
+                'col_result': table_col_result,
+                'cons_err': table_cons_err,
+            }
 if __name__ == '__main__':#refact
     src = 'mssql##';tgt = 'doris2';err_handling = 3;if_cpdata=0#9.0常用 mysql##/oracle/mssql##
-    
     import opg_refactor as opgr
     import compare_refactor as cr
     p=cr.ergodic_database()
+    #p=ergodic_database()
     dump_excel=ergodic.get_casefile()
+    start=stime.monotonic()
     p.compare(src,tgt,err_handling,if_cpdata)
+    print('总耗时%.2f毫秒'%((stime.monotonic()-start)*1000))
     p.dump_e(dump_excel)
-if __name__ == '__main__1':#手动调试
+if __name__ == '__main__2':#手动调试
     src = 'mssql##';tgt = 'doris2';err_handling = 3;if_cpdata=0#9.0常用 mysql##/oracle/mssql##
     p=ergodic_database()
     dump_excel=ergodic.get_casefile()
