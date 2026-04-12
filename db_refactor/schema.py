@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock, local
 
 from .config import get_compare_config, get_db_config, get_section_for_key, get_db_type
 
@@ -29,19 +31,16 @@ class BaseSchemaCollector:
         self.compare_config = compare_config or get_compare_config()
         self.db_config = db_config or get_db_config()
 
-    def collect(self, session, db_key):
+    def collect(self, session, db_key, worker_count=1, session_factory=None):
         section = get_section_for_key(db_key)
         table_names = [name for name in self.list_tables(session, section) if not self.should_skip_table(name)]
-        final = []
-        for index, table_name in enumerate(table_names, start=1):
-            rows = self.list_columns(session, section, table_name)
-            final.append(
-                {
-                    "tab_num": index,
-                    "tab_name": table_name,
-                    "tab_col": [self.row_to_column(item) for item in rows],
-                }
-            )
+        final = self._collect_tables(
+            session=session,
+            section=section,
+            table_names=table_names,
+            worker_count=worker_count,
+            session_factory=session_factory,
+        )
         return SchemaSnapshot(
             tab_num=len(table_names),
             tables=final,
@@ -49,6 +48,52 @@ class BaseSchemaCollector:
             primary_tables=self.list_primary_tables(session, section),
             primary_map=self.list_primary_map(session, section),
         )
+
+    def _collect_tables(self, session, section, table_names, worker_count=1, session_factory=None):
+        if worker_count and worker_count > 1 and session_factory and len(table_names) > 1:
+            return self._collect_tables_concurrently(section, table_names, worker_count, session_factory)
+        return self._collect_tables_serial(session, section, table_names)
+
+    def _collect_tables_serial(self, session, section, table_names):
+        final = []
+        for index, table_name in enumerate(table_names, start=1):
+            rows = self.list_columns(session, section, table_name)
+            final.append(self._build_table_snapshot(index, table_name, rows))
+        return final
+
+    def _collect_tables_concurrently(self, section, table_names, worker_count, session_factory):
+        workers = min(max(int(worker_count), 1), len(table_names))
+        worker_state = local()
+        created_sessions = []
+        created_sessions_lock = Lock()
+
+        def load_table(task):
+            index, table_name = task
+            worker_session = getattr(worker_state, "session", None)
+            if worker_session is None:
+                worker_session = session_factory()
+                worker_state.session = worker_session
+                with created_sessions_lock:
+                    created_sessions.append(worker_session)
+            rows = self.list_columns(worker_session, section, table_name)
+            return self._build_table_snapshot(index, table_name, rows)
+
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                return list(executor.map(load_table, enumerate(table_names, start=1)))
+        finally:
+            for worker_session in created_sessions:
+                try:
+                    worker_session.close()
+                except Exception:
+                    pass
+
+    def _build_table_snapshot(self, index, table_name, rows):
+        return {
+            "tab_num": index,
+            "tab_name": table_name,
+            "tab_col": [self.row_to_column(item) for item in rows],
+        }
 
     def should_skip_table(self, table_name):
         return str(table_name).startswith("i2_logkeeper")
