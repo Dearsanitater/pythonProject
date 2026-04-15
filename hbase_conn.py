@@ -12,9 +12,9 @@ config = configparser.ConfigParser(interpolation=None)
 config.read(r'resource/config.ini', encoding='utf-8')
 schema=config.get('hyperbase','namespace')
 
-def open_hbase():
-    T1 = T2 = 0;exc_thd, rcv_thd = config.get('hyperbase', 'exec_threads'), config.get('hyperbase','recv_threads')  # hbase_client DRIVER
-    ifKerberos = config.get('hyperbase', 'ker');principal = config.get('hyperbase', 'principle');keytab = config.get('hyperbase', 'kpath')
+def open_hbase(dbname):
+    T1 = T2 = 0;exc_thd, rcv_thd = config.get(dbname, 'exec_threads'), config.get(dbname,'recv_threads')  # hbase_client DRIVER
+    ifKerberos = config.get(dbname, 'ker');principal = config.get(dbname, 'principle');keytab = config.get(dbname, 'kpath')
     print(principal, keytab)
     try:
         T1 = time.perf_counter()
@@ -129,9 +129,7 @@ class connFactory():
         result=[]
         for t in tbs:
             result.append(str(t.getQualifierAsString()))
-        #print(result)
         self.conn_pool.put(conn)
-        #return len(result)
         return result
 
 if __name__=='__main__':
