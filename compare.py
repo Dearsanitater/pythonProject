@@ -604,12 +604,13 @@ class ergodic_database():
         print('merr',might_err)
         return  a['tab_num'],final
     def hbase_tab(self):
-        import hbase_conn
-        hc=hbase_conn.connFactory()
-        a=copy.deepcopy(self.tgt)
-        a['tab_num'],final=hc.scan_tb(hc.hb_tab())
+        import hbase_conn#懒加载，连接hbase需要单独启动jvm，该操作过重
+        #不认为关系型数据库-hbase会导致备端列少于源端，暂不考虑备端缺列情况，此处不打算查出全部列信息，仅返回表数量，列信息后续直接拿源端信息
+        hc=hbase_conn.connFactory(self.tgt_db)
+        #a=copy.deepcopy(self.tgt)
+        tbnum=hc.hb_tab()
         self.conn_tgt_cur=hc
-        return a['tab_num'],final
+        return tbnum
     def map_analysis(self,file):
         if self.src_db_t in self.sqlserver:
             sheet='mapping_mss';complex='mss_complex_mapping'
@@ -1501,7 +1502,6 @@ class ergodic_database():
                 for v in order_col[1].values() or []
                 for col in str(v).split(',')
                 if col.strip())
-
         else:#diffcons为空，无主键无索引
             odsql=''
         if self.conf_src=='sqlserver':
@@ -1530,7 +1530,7 @@ class ergodic_database():
             port = config2.get('elastic', 'port')
             schema = config2.get('elastic', 'schema')  # 赋值schema
             tgt_cur=requests.get(f"http://{host}:{port}/i2import_{schema.lower()}_{tbname.lower()}/_search").json()
-        elif self.tgt_db_t not in ('mysql','dm','hive','hdfs') and not self.tgt_db_t.endswith('gbk'):
+        elif self.tgt_db_t not in ('mysql','dm','hive','hdfs','hbase') and not self.tgt_db_t.endswith('gbk'):
             a='%s' % config.get('sqlserver', 'row') + " " + tbname
         elif self.tgt_db_t.endswith('gbk'):
             b = "set client_encoding to 'GBK';"
@@ -1544,13 +1544,11 @@ class ergodic_database():
         elif self.conf_tgt=='hdfs':
             tbname=f'//{tbname}//{tbname}.parquet'
             Pyarrow_tname=config2.get('hdfs','local_dir')+config2.get('hdfs','schema')+tbname
-        elif self.conf_tgt_t=='hbase':
+        elif self.conf_tgt=='hbase':
             hc=self.conn_tgt_cur
-
-            pass
         #else : a='%s' % config.get('sqlserver', 'row') + " [" +f'{tbname.lower()}' + "] " + 'order by 1 asc'
         else: a=f"""select * from {tbname.lower()} """
-        if self.conf_tgt not in ('elastic','hdfs','sqlserver'):
+        if self.conf_tgt not in ('elastic','hdfs','sqlserver','hbase'):
             print(a+odsql)
             tgt_cur.execute(a+odsql)
             xxx = tgt_cur.fetchall()
@@ -1562,6 +1560,9 @@ class ergodic_database():
             tgt_cur.execute(a + odsql)
             xxx=tuple(map(tuple, tgt_cur.fetchall()))
             t = pandas.DataFrame(xxx)
+        elif self.conf_tgt=='hbase':
+            #hc传tbcol，按照源库顺序扫描，直接复制到dataframe，返回dataframe
+            t=hc.scan_one_tb(tbname,tbcol)
         else:#如果是hdfs的parquet文件，先预处理成dataframe
             t=self.pretreatment_hdfs(Pyarrow_tname)
             pass
@@ -2129,7 +2130,7 @@ class ergodic_database():
                 elif b == 'x':
                     break
                 else:print('重新输入')
-    def define_type(self):
+    def define_type(self):#基本弃用
         if self.src_db_t in self.oracle:self.conf_src='oracle';src=self.ora_tab(self.src_db)
         elif self.src_db_t in self.mysql: self.conf_src='mysql';src=self.mysql_tab(self.src_db)
         elif self.src_db_t in self.pg: self.conf_src='postgre';src=self.pg_tab(self.src_db)
@@ -2162,7 +2163,7 @@ class ergodic_database():
                 self.conf_tgt = 'ob_oracle';self.ob_mode='src_oralce';tgt = self.ora_tab(self.tgt_db)
             else:self.conf_tgt = 'ob_mysql';self.ob_mode='src_oralce';tgt = self.mysql_tab(self.tgt_db)
         elif self.tgt_db_t=='hbase':
-            self.conf_tgt = 'hbase';tgt=self.hbase_tab()
+            self.conf_tgt = 'hbase';tgt=(self.hbase_tab(),src[1])#hbase特殊，备端表结构从源端获取
         else:tgt=self.conf_tgt='oracle';self.ora_tab(self.tgt_db)#缺省备库oracle
         return src,tgt
     def compare(self,src,tgt,err_handling,if_cpdata):
@@ -2278,7 +2279,7 @@ class ergodic_database():
                 'cons_err': table_cons_err,
             }
 if __name__ == '__main__':#refact
-    src = 'mssql##';tgt = 'doris2';err_handling = 3;if_cpdata=0#9.0常用 mysql##/oracle/mssql##
+    src = 'mssql##';tgt = 'hyperbase184';err_handling = 3;if_cpdata=1#9.0常用 mysql##/oracle/mssql##
     import opg_refactor as opgr
     import compare_refactor as cr
     p=cr.ergodic_database()

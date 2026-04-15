@@ -127,7 +127,7 @@ class get_casefile ():
                 if j<i:j+=1
                 elif i==j:
                     ws.merge_cells(start_row=k, end_row=j-1, start_column=1, end_column=1)
-                    #x_y=self.merge(ws, k, err, x_y, x_int, sn, bfe, blue, l)
+                    x_y=self.merge(ws, k, err, x_y, x_int, sn, bfe, blue, l)
                     break
                 else:break
             else:
