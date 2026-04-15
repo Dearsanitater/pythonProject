@@ -13,6 +13,8 @@ config = configparser.ConfigParser(interpolation=None)
 config.read(r'resource/config.ini', encoding='utf-8')
 #dbname='hyperbase184'
 
+#dbname='hyperbase184'
+
 
 def open_hbase(dbname):
     T1 = T2 = 0;exc_thd, rcv_thd = config.get(dbname, 'exec_threads'), config.get(dbname,'recv_threads')  # hbase_client DRIVER
@@ -82,10 +84,13 @@ def open_hbase(dbname):
 class connFactory():
     def __init__(self,dbname):
         self.conn=open_hbase(dbname)
+    def __init__(self,dbname):
+        self.conn=open_hbase(dbname)
         self.all_value=[]
         self.src_col = {'tab_num': 0, 'tab_name': '', 'tab_col': []}
         self.col={'col_name': '', 'col_num': 1, 'len': None, 'null': 'NO', 'num_pre': 1, 'num_scale': 1, 'time_sh': None, 'type': 'text'}
         #self.conn_pool=Queue()
+        self.schema=config.get(dbname,'namespace')
         self.schema=config.get(dbname,'namespace')
         self.Configuration = JClass("org.apache.hadoop.conf.Configuration")
         self.HBaseConfiguration = JClass("org.apache.hadoop.hbase.HBaseConfiguration")
@@ -100,6 +105,7 @@ class connFactory():
         tbno=0;final=[]
         try:
             for tbname in tblist:
+                sctbname=f'{self.schema}:'+tbname;tbno+=1
                 sctbname=f'{self.schema}:'+tbname;tbno+=1
                 scan = self.Scan()
                 table = conn.getTable(self.TableName.valueOf(sctbname))
@@ -185,6 +191,7 @@ class connFactory():
         conn=self.conn
         admin=conn.getAdmin()
         tbs=admin.listTableNamesByNamespace(self.schema)
+        tbs=admin.listTableNamesByNamespace(self.schema)
         result=[]
         for t in tbs:
             result.append(str(t.getQualifierAsString()))
@@ -193,7 +200,10 @@ class connFactory():
         return result
     def get_conn(self,dbname):
         return open_hbase(dbname)
+    def get_conn(self,dbname):
+        return open_hbase(dbname)
 if __name__=='__main__':
+    cf=connFactory('hyperbase184')
     cf=connFactory('hyperbase184')
     cf.hb_tab()
     #cf.scan_tb(cf.hb_tab())
