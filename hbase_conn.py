@@ -84,13 +84,8 @@ def open_hbase(dbname):
 class connFactory():
     def __init__(self,dbname):
         self.conn=open_hbase(dbname)
-    def __init__(self,dbname):
-        self.conn=open_hbase(dbname)
-        self.all_value=[]
         self.src_col = {'tab_num': 0, 'tab_name': '', 'tab_col': []}
         self.col={'col_name': '', 'col_num': 1, 'len': None, 'null': 'NO', 'num_pre': 1, 'num_scale': 1, 'time_sh': None, 'type': 'text'}
-        #self.conn_pool=Queue()
-        self.schema=config.get(dbname,'namespace')
         self.schema=config.get(dbname,'namespace')
         self.Configuration = JClass("org.apache.hadoop.conf.Configuration")
         self.HBaseConfiguration = JClass("org.apache.hadoop.hbase.HBaseConfiguration")
@@ -100,41 +95,6 @@ class connFactory():
         self.ResultScanner = JClass("org.apache.hadoop.hbase.client.ResultScanner")
         self.Bytes = JClass("org.apache.hadoop.hbase.util.Bytes")
         self.Admin = JClass("org.apache.hadoop.hbase.client.Admin")
-    def scan_tb_num(self,tblist):
-        conn=self.conn
-        tbno=0;final=[]
-        try:
-            for tbname in tblist:
-                sctbname=f'{self.schema}:'+tbname;tbno+=1
-                sctbname=f'{self.schema}:'+tbname;tbno+=1
-                scan = self.Scan()
-                table = conn.getTable(self.TableName.valueOf(sctbname))
-                scanner=table.getScanner(scan)
-                result_dict={};new_value={};n=0;tmp=[]
-                for result in scanner:
-                    rowkey = self.Bytes.toString(result.getRow())#1
-                    #colkey = n
-                    row_data = {}
-                    for cell in result.listCells():
-                        cf = self.Bytes.toString(cell.getFamilyArray(), cell.getFamilyOffset(), cell.getFamilyLength())
-                        qual = self.Bytes.toString(cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength())
-                        val = self.Bytes.toString(cell.getValueArray(), cell.getValueOffset(), cell.getValueLength())
-                        row_data[f"{qual}"] = val
-                    if len(row_data)>n:n+=1
-                    else:n=len(row_data)#记录最多字段行，n是tmp列表的索引
-                    tmp.append(row_data.copy())
-                scanner.close()
-                table.close()
-                result_dict['tab_col'],new_value['tab_col'] = self.pret_col(tmp,n);result_dict['tab_name']=tbname;result_dict['tab_num']=tbno
-                new_value['tab_name']=tbname
-                final.append(result_dict)
-                self.all_value.append(new_value)
-            #print(final)
-            return tbno
-        finally:
-            #self.conn_pool.put(conn)
-            print(tbno,final)
-            pass
     def scan_one_tb(self,tbname,tbcol):
         tmp_dict = {}
         tmp_list = []
@@ -191,7 +151,6 @@ class connFactory():
         conn=self.conn
         admin=conn.getAdmin()
         tbs=admin.listTableNamesByNamespace(self.schema)
-        tbs=admin.listTableNamesByNamespace(self.schema)
         result=[]
         for t in tbs:
             result.append(str(t.getQualifierAsString()))
@@ -200,10 +159,9 @@ class connFactory():
         return result
     def get_conn(self,dbname):
         return open_hbase(dbname)
-    def get_conn(self,dbname):
-        return open_hbase(dbname)
+
 if __name__=='__main__':
-    cf=connFactory('hyperbase184')
+
     cf=connFactory('hyperbase184')
     cf.hb_tab()
     #cf.scan_tb(cf.hb_tab())

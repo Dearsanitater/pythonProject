@@ -47,5 +47,7 @@ urlpatterns = [
     path('rule/detail/<str:rule_id>/',apps.detail),
     path('media/excel/',apps.serve_excel),
     path('detail/downloadf',apps.download_ffile),
-    path('detail/download',apps.serve_excel)
+    path('detail/download',apps.serve_excel),
+    #hbase数据查询界面
+    path('/select/hbase',apps.serve_excel)
 ]

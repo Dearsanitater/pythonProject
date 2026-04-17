@@ -39,7 +39,7 @@ root_directory = r'D:\Info\case_resource'  # 用例包#############
 db2_case = r'D:\Info\case_resource\db2\db2-sql'  # 表修复数据类型路径
 
 dds_mapping = json.loads(config.get('400_type', 'type'))
-
+ignore_casefile=['DDL','NOPK']#忽略带关键字的case文件
 
 class db2_conn():
     def __init__(self, conn):
@@ -107,7 +107,6 @@ class read_case():
         # self.dml=('insert','update','delete')
     def ergodic(self, type):
         # self.case_dir=config.get('case','case_dir')+type#注释该行启用手动设置case路径
-
         if self.case_dir:
             self.case_dir = self.case_dir[0]
         else:
@@ -115,7 +114,7 @@ class read_case():
             self.case_dir = case_cfg.get('case_file', front)
         print(f'用例路径{self.case_dir}')
         for files in os.listdir(self.case_dir):
-            if files.endswith('.sql') and 'nopk' not in files.lower():
+            if files.endswith('.sql') and  not(any(x in files for x in ignore_casefile)):
                 self.case_file_list.append('%s/%s' % (self.case_dir, files))
         return self.case_file_list
     def analysis(self, addr, pre_crt):  # 返回最终sql用例列表 每个用例为一个字典
