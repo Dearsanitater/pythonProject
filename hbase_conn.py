@@ -15,27 +15,36 @@ config.read(r'resource/config.ini', encoding='utf-8')
 
 #dbname='hyperbase184'
 
-
+def ker_jvm(jars):
+    jars.append('lib/hyperlib')
+    jpype.startJVM(
+        "-Djava.security.krb5.conf=lib/krb5.ini",
+        "-Djava.security.auth.login.config=lib/hyperlib/jaas.conf",
+        "-Dsun.security.krb5.debug=true",
+        # "-Dnetworkaddress.cache.ttl=0",
+        "-Dfile.encoding=UTF-8",
+        "-Djavax.security.auth.useSubjectCredsOnly=false", classpath=jars, jvmpath=jvm_path)
+    java_lang_System = jpype.JPackage("java").lang.System
+    java_lang_System.setOut(jpype.java.io.PrintStream(jpype.java.io.FileOutputStream("C:\\temp\\jvm_krb5.log")))
+    java_lang_System.setErr(jpype.java.io.PrintStream(jpype.java.io.FileOutputStream("C:\\temp\\jvm_krb5_err.log")))
+def no_ker_jvm(jars):
+    jpype.startJVM(
+    "-Dfile.encoding=UTF-8",
+    classpath=jars,
+    jvmpath=jvm_path)
 def open_hbase(dbname):
     T1 = T2 = 0;exc_thd, rcv_thd = config.get(dbname, 'exec_threads'), config.get(dbname,'recv_threads')  # hbase_client DRIVER
     ifKerberos = config.get(dbname, 'ker');principal = config.get(dbname, 'principle');keytab = config.get(dbname, 'kpath')
-    print(principal, keytab)
+    host,port,parent=config.get(dbname,'host'),config.get(dbname,'zk_port'),config.get(dbname,'znode_parent')
     try:
         T1 = time.perf_counter()
         jars = [os.path.join("lib/hbase", i) for i in os.listdir("lib/hbase") if i.endswith(".jar")]
         # 前缀认证
         if ifKerberos == 1:
-            jars.append('lib/hyperlib')
-            jpype.startJVM(
-                "-Djava.security.krb5.conf=lib/krb5.ini",
-                "-Djava.security.auth.login.config=lib/hyperlib/jaas.conf",
-                "-Dsun.security.krb5.debug=true",
-                # "-Dnetworkaddress.cache.ttl=0",
-                "-Dfile.encoding=UTF-8",
-                "-Djavax.security.auth.useSubjectCredsOnly=false", classpath=jars, jvmpath=jvm_path)
-            java_lang_System = jpype.JPackage("java").lang.System
-            java_lang_System.setOut(jpype.java.io.PrintStream(jpype.java.io.FileOutputStream("C:\\temp\\jvm_krb5.log")))
-            java_lang_System.setErr(jpype.java.io.PrintStream(jpype.java.io.FileOutputStream("C:\\temp\\jvm_krb5_err.log")))
+            if not jpype.isJVMStarted():
+                print('no kerberos jvm exsist,starting...');ker_jvm(jars)
+            else:print('kerberos jvm exsist,复用')
+            print(principal, keytab)
             from org.apache.hadoop.security import UserGroupInformation
             from org.apache.hadoop.conf import Configuration
             conf = Configuration()
@@ -53,20 +62,19 @@ def open_hbase(dbname):
             action = jpype.JProxy(PrivilegedExceptionAction, dict(run=run))
             conn = ugi.doAs(action)
         else:
-            jpype.startJVM(
-                "-Dfile.encoding=UTF-8",
-                classpath=jars,
-                jvmpath=jvm_path
-                )
+            if not jpype.isJVMStarted():
+                print('no jvm exsist,starting...');no_ker_jvm(jars)
+            else:print('jvm exsist,复用')
             print('未启用kerberos认证')
             from org.apache.hadoop.hbase import HBaseConfiguration
             from org.apache.hadoop.hbase.client import ConnectionFactory
             from org.apache.hadoop.conf import Configuration
             hbase_conf = HBaseConfiguration.create()
-            hbase_conf.set("hbase.zookeeper.quorum", "10.1.111.184")
-            hbase_conf.set("hbase.zookeeper.property.clientPort", "2181")
+            hbase_conf.set("hbase.zookeeper.quorum", f"{host}")
+            hbase_conf.set("hbase.zookeeper.property.clientPort", f"{port}")
             # 如果有 znode parent 也要加
-            hbase_conf.set("zookeeper.znode.parent", "/hbase")
+            hbase_conf.set("zookeeper.znode.parent", f"{parent}")
+            print('start建立连接...')
             conn = ConnectionFactory.createConnection(hbase_conf)
             print("HBase 无认证连接成功:", conn)
         print('stablish conn done')
@@ -74,11 +82,7 @@ def open_hbase(dbname):
     except Exception as e:
         print(f"数据库连接失败！{e}")
         return
-    # print(conn, f"hyper 数据库连接成功")
-    # conn_pool = Queue()
-    # for i in range(int(exc_thd)):
-    #    conn_pool.put(ugi.doAs(action))
-    # print('THD hyperbase 链接耗时:%f毫秒' % (((T2 - T1) * 1000)))
+    print(f'{dbname}链接耗时:%f毫秒' % (((T2 - T1) * 1000)))
     return conn
 
 class connFactory():
