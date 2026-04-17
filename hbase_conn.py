@@ -170,23 +170,38 @@ class connFactory():
         #print(new_tmp)
                 #standard=(standard+(tmp[n-1]-standard)).copy
         return  tab_col,new_tmp
-    def hb_tab(self):#返回表名列表
+    def hb_namespace(self):#浏览器用，返回所有 namespace
         conn=self.conn
         admin=conn.getAdmin()
-        tbs=admin.listTableNamesByNamespace(self.schema)
         result=[]
-        for t in tbs:
-            result.append(str(t.getQualifierAsString()))
-        #self.conn_pool.put(conn)
-        print(result)
-        admin.close()
-        return result
-    def browse_one_tb(self,tbname,limit=200):#浏览器专用方法
+        try:
+            spaces=admin.listNamespaceDescriptors()
+            for item in spaces:
+                result.append(str(item.getName()))
+            print(result)
+            return result
+        finally:
+            admin.close()
+    def hb_tab(self,namespace=None):#返回表名列表
+        conn=self.conn
+        admin=conn.getAdmin()
+        result=[]
+        try:
+            use_namespace = namespace or self.schema
+            tbs=admin.listTableNamesByNamespace(use_namespace)
+            for t in tbs:
+                result.append(str(t.getQualifierAsString()))
+            print(result)
+            return result
+        finally:
+            admin.close()
+    def browse_one_tb(self,tbname,limit=200,namespace=None):#浏览器专用方法
         conn=self.conn
         tbno=0;final=[];rows=[];columns=[]
         table=None;scanner=None
         try:
-            sctbname=f'{self.schema}:'+tbname;tbno+=1
+            use_namespace = namespace or self.schema
+            sctbname=f'{use_namespace}:'+tbname;tbno+=1
             scan = self.Scan()
             table = conn.getTable(self.TableName.valueOf(sctbname))
             scanner=table.getScanner(scan)

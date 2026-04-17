@@ -77,28 +77,30 @@ def _hbase_worker_main(worker_key, address, authkey):
                 cache[dbname] = hbase_conn.connFactory(dbname)
             hc = cache[dbname]
             if action == 'connect':
-                tables = hc.hb_tab()
+                namespaces = hc.hb_namespace()
                 conn.send({
                     'status': 'success',
                     'dbname': dbname,
-                    'namespace': section['namespace'],
-                    'table_count': len(tables),
+                    'namespaces': namespaces,
+                    'namespace_count': len(namespaces),
                 })
             elif action == 'tree':
+                namespace = payload.get('namespace')
                 conn.send({
                     'status': 'success',
                     'dbname': dbname,
-                    'namespace': section['namespace'],
-                    'tables': hc.hb_tab(),
+                    'namespace': namespace,
+                    'tables': hc.hb_tab(namespace=namespace),
                 })
             elif action == 'scan':
                 table = payload.get('table')
+                namespace = payload.get('namespace')
                 limit = int(payload.get('limit', 200))
-                result = hc.browse_one_tb(table, limit=limit)
+                result = hc.browse_one_tb(table, limit=limit, namespace=namespace)
                 conn.send({
                     'status': 'success',
                     'dbname': dbname,
-                    'namespace': section['namespace'],
+                    'namespace': namespace,
                     'table': table,
                     'limit': limit,
                     'result': result,
@@ -159,7 +161,8 @@ def hbase_sources(request):
         if cfg.get(section, 'type', fallback='').lower() == 'hbase':
             sources.append({
                 'name': section,
-                'namespace': cfg.get(section, 'namespace', fallback='default'),
+                #'namespace': 'krb = '+cfg.get(section, 'ker', fallback='default'),
+                'namespace': cfg.get(section,'host',fallback='default'),
                 'ker': cfg.get(section, 'ker', fallback='0'),
                 'host': cfg.get(section, 'host', fallback=''),
             })
@@ -181,11 +184,12 @@ def hbase_connect(request):
 
 def hbase_tree(request):
     dbname = request.GET.get('dbname', '').strip()
-    if not dbname:
-        return JsonResponse({'status': 'error', 'message': '缺少 dbname'}, status=400)
+    namespace = request.GET.get('namespace', '').strip()
+    if not dbname or not namespace:
+        return JsonResponse({'status': 'error', 'message': '缺少 dbname 或 namespace'}, status=400)
     try:
         section = _get_hbase_section(dbname)
-        result = _call_hbase_worker(section['ker'], {'action': 'tree', 'dbname': dbname})
+        result = _call_hbase_worker(section['ker'], {'action': 'tree', 'dbname': dbname, 'namespace': namespace})
         status = 200 if result.get('status') == 'success' else 500
         return JsonResponse(result, status=status)
     except Exception as e:
@@ -194,15 +198,16 @@ def hbase_tree(request):
 
 def hbase_scan(request):
     dbname = request.GET.get('dbname', '').strip()
+    namespace = request.GET.get('namespace', '').strip()
     table = request.GET.get('table', '').strip()
     limit = int(request.GET.get('limit', 200))
-    if not dbname or not table:
-        return JsonResponse({'status': 'error', 'message': '缺少 dbname 或 table'}, status=400)
+    if not dbname or not namespace or not table:
+        return JsonResponse({'status': 'error', 'message': '缺少 dbname、namespace 或 table'}, status=400)
     try:
         section = _get_hbase_section(dbname)
         result = _call_hbase_worker(
             section['ker'],
-            {'action': 'scan', 'dbname': dbname, 'table': table, 'limit': limit},
+            {'action': 'scan', 'dbname': dbname, 'namespace': namespace, 'table': table, 'limit': limit},
         )
     except Exception as e:
         result = {'status': 'error', 'message': str(e)}
@@ -217,7 +222,7 @@ def hbase_scan(request):
         yield json.dumps({
             'type': 'meta',
             'dbname': dbname,
-            'namespace': result.get('namespace', ''),
+            'namespace': namespace,
             'table': table,
             'limit': limit,
             'columns': columns,

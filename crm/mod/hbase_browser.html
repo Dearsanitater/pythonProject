@@ -11,7 +11,7 @@
             --border: #d0d7de;
             --muted: #57606a;
             --text: #1f2328;
-            --accent: #0969da;
+            --accent: rgba(9, 107, 218, 0.86);
             --accent-soft: #ddf4ff;
             --editor-height: 38%;
             --sidebar-width: 300px;
@@ -97,6 +97,12 @@
             color: #fff;
         }
 
+        button.sec {
+            background-color: rgba(40, 137, 167, 0.82);
+
+
+            color: #fff;
+        }
         button:hover {
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(9, 105, 218, 0.12);
@@ -443,6 +449,9 @@
             <p>选择 DB.ini 中的 HBase 数据源，建立连接后在左侧浏览表，双击表名读取前 200 行。</p>
         </div>
         <div class="toolbar-actions">
+            <a href="/rule">
+                <button class="sec" type="button">比对</button></a>
+            <button class="sec" id="goConfig" type="button">查看全部数据源</button>
             <select id="sourceSelect">
                 <option value="">加载中...</option>
             </select>
@@ -481,9 +490,7 @@
                             <span class="dot green"></span>
                             <span class="editor-file mono">scratch.sql</span>
                         </div>
-                        <textarea class="editor-textarea" spellcheck="false">-- HBase Browser scratch area
--- 这里暂时只是 GitHub 风格外观占位
--- 后续可以接选中 SQL / 查询脚本执行能力</textarea>
+                        <textarea class="editor-textarea" spellcheck="false">-- 该输入框暂时没什么用</textarea>
                     </div>
                 </section>
 
@@ -514,6 +521,7 @@
     const state = {
         connections: new Map(),
         activeDb: null,
+        activeNamespace: null,
         activeTable: null,
         rows: [],
         columns: ["__rowkey__"],
@@ -521,10 +529,12 @@
         scanController: null,
         collapsedConnections: new Set(),
         collapsedNamespaces: new Set(),
+        loadingNamespaces: new Set(),
     };
 
     const sourceSelect = document.getElementById("sourceSelect");
     const connectBtn = document.getElementById("connectBtn");
+    const goConfig = document.getElementById("goConfig");
     const treeWrap = document.getElementById("treeWrap");
     const resultTitle = document.getElementById("resultTitle");
     const resultSubtitle = document.getElementById("resultSubtitle");
@@ -698,7 +708,6 @@
                 }
                 item.innerHTML = `
                     <span class="mono">${table}</span>
-                    <span class="table-meta">双击打开</span>
                 `;
                 item.addEventListener("dblclick", () => openTable(dbname, table));
                 tableList.appendChild(item);
@@ -866,6 +875,219 @@
         }
     }
 
+    connectSource = async function() {
+        const dbname = sourceSelect.value;
+        if (!dbname) {
+            return;
+        }
+        streamStatus.textContent = `正在连接 ${dbname}`;
+        connectBtn.disabled = true;
+        try {
+            const connectResp = await fetch(`/select/hbase/connect?dbname=${encodeURIComponent(dbname)}`);
+            const connectPayload = await connectResp.json();
+            if (connectPayload.status !== "success") {
+                throw new Error(connectPayload.message || "连接失败");
+            }
+            const namespaces = (connectPayload.namespaces || []).map((name) => ({
+                name,
+                tables: null,
+            }));
+            state.connections.set(dbname, {
+                dbname,
+                namespaces,
+            });
+            renderTree();
+            streamStatus.textContent = `已连接 ${dbname}，共 ${namespaces.length} 个 namespace`;
+        } catch (error) {
+            streamStatus.textContent = `连接失败: ${error.message}`;
+        } finally {
+            connectBtn.disabled = false;
+        }
+    };
+
+    async function loadNamespaceTables(dbname, namespaceName) {
+        const connection = state.connections.get(dbname);
+        if (!connection) {
+            return;
+        }
+        const namespace = connection.namespaces.find((item) => item.name === namespaceName);
+        const nsKey = `${dbname}:${namespaceName}`;
+        if (!namespace || namespace.tables !== null || state.loadingNamespaces.has(nsKey)) {
+            return;
+        }
+        state.loadingNamespaces.add(nsKey);
+        renderTree();
+        streamStatus.textContent = `正在读取 ${dbname} / ${namespaceName} 的表`;
+        try {
+            const treeResp = await fetch(
+                `/select/hbase/tree?dbname=${encodeURIComponent(dbname)}&namespace=${encodeURIComponent(namespaceName)}`
+            );
+            const treePayload = await treeResp.json();
+            if (treePayload.status !== "success") {
+                throw new Error(treePayload.message || "读取表列表失败");
+            }
+            namespace.tables = treePayload.tables || [];
+            state.connections.set(dbname, connection);
+            streamStatus.textContent = `${dbname} / ${namespaceName} 共 ${namespace.tables.length} 张表`;
+        } catch (error) {
+            streamStatus.textContent = `读取表列表失败: ${error.message}`;
+        } finally {
+            state.loadingNamespaces.delete(nsKey);
+            renderTree();
+        }
+    }
+
+    renderTree = function() {
+        if (!state.connections.size) {
+            treeWrap.innerHTML = '<div class="empty">先选择一个 HBase 数据源并点击“连接”</div>';
+            return;
+        }
+
+        treeWrap.innerHTML = "";
+        for (const [dbname, info] of state.connections.entries()) {
+            const connKey = `${dbname}`;
+            const card = document.createElement("div");
+            card.className = "conn-card";
+
+            const header = document.createElement("div");
+            header.className = "conn-header";
+            header.innerHTML = `
+                <div>
+                    <div class="conn-name">${dbname}</div>
+                    <div class="conn-meta">${info.namespaces.length} namespaces</div>
+                </div>
+                <div class="tree-toggle">${state.collapsedConnections.has(connKey) ? "展开" : "收起"}</div>
+            `;
+
+            const list = document.createElement("div");
+            list.className = "tree-list";
+            if (state.collapsedConnections.has(connKey)) {
+                list.classList.add("collapsed");
+            }
+
+            header.addEventListener("click", () => {
+                if (state.collapsedConnections.has(connKey)) {
+                    state.collapsedConnections.delete(connKey);
+                } else {
+                    state.collapsedConnections.add(connKey);
+                }
+                renderTree();
+            });
+
+            for (const namespace of info.namespaces) {
+                const nsKey = `${dbname}:${namespace.name}`;
+                const namespaceBlock = document.createElement("div");
+                const nsHeader = document.createElement("div");
+                nsHeader.className = "node-header";
+                const loadedText = namespace.tables === null
+                    ? (state.loadingNamespaces.has(nsKey) ? "加载中" : "双击加载表")
+                    : `${namespace.tables.length} tables`;
+                nsHeader.innerHTML = `
+                    <div>
+                        <div class="node-title">${namespace.name}</div>
+                        <div class="table-meta">${loadedText}</div>
+                    </div>
+                    <div class="tree-toggle">${state.collapsedNamespaces.has(nsKey) ? "展开" : "收起"}</div>
+                `;
+
+                const tableList = document.createElement("ul");
+                if (state.collapsedNamespaces.has(nsKey)) {
+                    tableList.classList.add("collapsed");
+                }
+
+                if (Array.isArray(namespace.tables)) {
+                    for (const table of namespace.tables) {
+                        const item = document.createElement("li");
+                        item.className = "table-item";
+                        if (state.activeDb === dbname && state.activeNamespace === namespace.name && state.activeTable === table) {
+                            item.classList.add("active");
+                        }
+                        item.innerHTML = `<span class="mono">${table}</span>`;
+                        item.addEventListener("dblclick", () => openTable(dbname, namespace.name, table));
+                        tableList.appendChild(item);
+                    }
+                }
+
+                nsHeader.addEventListener("click", () => {
+                    if (state.collapsedNamespaces.has(nsKey)) {
+                        state.collapsedNamespaces.delete(nsKey);
+                    } else {
+                        state.collapsedNamespaces.add(nsKey);
+                    }
+                    renderTree();
+                });
+                nsHeader.addEventListener("dblclick", async (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    state.collapsedNamespaces.delete(nsKey);
+                    await loadNamespaceTables(dbname, namespace.name);
+                });
+
+                namespaceBlock.appendChild(nsHeader);
+                namespaceBlock.appendChild(tableList);
+                list.appendChild(namespaceBlock);
+            }
+
+            card.appendChild(header);
+            card.appendChild(list);
+            treeWrap.appendChild(card);
+        }
+    };
+
+    openTable = async function(dbname, namespace, table) {
+        if (state.scanController) {
+            state.scanController.abort();
+        }
+
+        state.activeDb = dbname;
+        state.activeNamespace = namespace;
+        state.activeTable = table;
+        renderTree();
+        resetTableState();
+        streamStatus.textContent = "准备读取";
+
+        const controller = new AbortController();
+        state.scanController = controller;
+
+        try {
+            const response = await fetch(
+                `/select/hbase/scan?dbname=${encodeURIComponent(dbname)}&namespace=${encodeURIComponent(namespace)}&table=${encodeURIComponent(table)}&limit=200`,
+                { signal: controller.signal }
+            );
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.trim()) {
+                        continue;
+                    }
+                    consumeMessage(JSON.parse(line));
+                }
+            }
+
+            if (buffer.trim()) {
+                consumeMessage(JSON.parse(buffer));
+            }
+        } catch (error) {
+            if (error.name === "AbortError") {
+                streamStatus.textContent = "读取已切换到其他表";
+                return;
+            }
+            streamStatus.textContent = `读取失败: ${error.message}`;
+        }
+    };
+
     function setupResizer() {
         const divider = document.getElementById("dragDivider");
         const stack = document.getElementById("verticalStack");
@@ -920,7 +1142,9 @@
             document.body.style.userSelect = "";
         });
     }
-
+        document.getElementById("goConfig").onclick = function () {
+        window.open("../../config", "_blank");
+    };
     connectBtn.addEventListener("click", connectSource);
     setupResizer();
     setupSidebarResizer();
