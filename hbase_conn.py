@@ -33,14 +33,14 @@ def no_ker_jvm(jars):
     classpath=jars,
     jvmpath=jvm_path)
 def open_hbase(dbname):
-    T1 = T2 = 0;exc_thd, rcv_thd = config.get(dbname, 'exec_threads'), config.get(dbname,'recv_threads')  # hbase_client DRIVER
+    T1 = T2 = 0#;exc_thd, rcv_thd = config.get(dbname, 'exec_threads'), config.get(dbname,'recv_threads')  # hbase_client DRIVER
     ifKerberos = config.get(dbname, 'ker');principal = config.get(dbname, 'principle');keytab = config.get(dbname, 'kpath')
-    host,port,parent=config.get(dbname,'host'),config.get(dbname,'zk_port'),config.get(dbname,'znode_parent')
+    zk_host,zk_port,parent=config.get(dbname,'host'),config.get(dbname,'zk_port'),config.get(dbname,'znode_parent')
     try:
         T1 = time.perf_counter()
         jars = [os.path.join("lib/hbase", i) for i in os.listdir("lib/hbase") if i.endswith(".jar")]
         # 前缀认证
-        if ifKerberos == 1:
+        if ifKerberos == '1':
             if not jpype.isJVMStarted():
                 print('no kerberos jvm exsist,starting...');ker_jvm(jars)
             else:print('kerberos jvm exsist,复用')
@@ -70,8 +70,8 @@ def open_hbase(dbname):
             from org.apache.hadoop.hbase.client import ConnectionFactory
             from org.apache.hadoop.conf import Configuration
             hbase_conf = HBaseConfiguration.create()
-            hbase_conf.set("hbase.zookeeper.quorum", f"{host}")
-            hbase_conf.set("hbase.zookeeper.property.clientPort", f"{port}")
+            hbase_conf.set("hbase.zookeeper.quorum", f"{zk_host}")
+            hbase_conf.set("hbase.zookeeper.property.clientPort", f"{zk_port}")
             # 如果有 znode parent 也要加
             hbase_conf.set("zookeeper.znode.parent", f"{parent}")
             print('start建立连接...')
@@ -106,7 +106,6 @@ class connFactory():
             col_name = item['col_name']
             tmp_list.append(col_name)
             tmp_dict[col_name] = ''
-
         conn = self.conn
         sctbname = f'{self.schema}:{tbname}'
         scan = self.Scan()
@@ -160,7 +159,37 @@ class connFactory():
             result.append(str(t.getQualifierAsString()))
         #self.conn_pool.put(conn)
         print(result)
+        admin.close()
         return result
+    def browse_one_tb(self,tbname,limit=200):#浏览器专用方法
+        conn=self.conn
+        tbno=0;final=[]
+        try:
+            sctbname=f'{self.schema}:'+tbname;tbno+=1
+            scan = self.Scan()
+            table = conn.getTable(self.TableName.valueOf(sctbname))
+            scanner=table.getScanner(scan)
+            result_dict={};new_value={};n=0;tmp=[]
+            for result in scanner:
+                rowkey = self.Bytes.toString(result.getRow())#1
+                #colkey = n
+                row_data = {}
+                for cell in result.listCells():
+                    cf = self.Bytes.toString(cell.getFamilyArray(), cell.getFamilyOffset(), cell.getFamilyLength())
+                    qual = self.Bytes.toString(cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength())
+                    val = self.Bytes.toString(cell.getValueArray(), cell.getValueOffset(), cell.getValueLength())
+                    row_data[f"{qual}"] = val
+                if len(row_data)>n:n+=1
+                else:n=len(row_data)#记录最多字段行，n是tmp列表的索引
+                tmp.append(row_data.copy())
+            scanner.close()
+            table.close()
+            result_dict['tab_col'],new_value['tab_col'] = self.pret_col(tmp,n);result_dict['tab_name']=tbname;result_dict['tab_num']=tbno
+            final.append(result_dict)
+            #print(final)
+            return tbno,final
+        finally:
+            pass
     def get_conn(self,dbname):
         return open_hbase(dbname)
 
