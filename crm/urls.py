@@ -49,5 +49,9 @@ urlpatterns = [
     path('detail/downloadf',apps.download_ffile),
     path('detail/download',apps.serve_excel),
     #hbase数据查询界面
-    path('/select/hbase',apps.serve_excel)
+    path('select/hbase', apps.hbase_browser),
+    path('select/hbase/sources', apps.hbase_sources),
+    path('select/hbase/connect', apps.hbase_connect),
+    path('select/hbase/tree', apps.hbase_tree),
+    path('select/hbase/scan', apps.hbase_scan),
 ]

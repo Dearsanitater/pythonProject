@@ -571,7 +571,7 @@ class read_case():
 crt_delay = 1
 # dml/ddl延迟
 dml_delay = 1.5
-# 是否overflow
+# 是否overflow，0、不处理行内容，1、缩短行款
 overflow = 1
 # 手动调试
 if __name__ == '__main__':  # 手动调试
