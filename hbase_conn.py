@@ -11,6 +11,8 @@ import pandas
 jvm_path=r"C:\Program Files\Java\jre1.8.0_201\bin\server\jvm.dll"
 config = configparser.ConfigParser(interpolation=None)
 config.read(r'resource/config.ini', encoding='utf-8')
+db_config = configparser.ConfigParser(interpolation=None)
+db_config.read(r'resource/DB.ini', encoding='utf-8')
 #dbname='hyperbase184'
 
 #dbname='hyperbase184'
@@ -32,10 +34,28 @@ def no_ker_jvm(jars):
     "-Dfile.encoding=UTF-8",
     classpath=jars,
     jvmpath=jvm_path)
+def use_db_ini():
+    global config
+    config = configparser.ConfigParser(interpolation=None)
+    config.read(r'resource/DB.ini', encoding='utf-8')
+    return config
+def list_hbase_sources():
+    result = []
+    for section in db_config.sections():
+        if db_config.get(section, 'type', fallback='').lower() == 'hbase':
+            result.append({
+                'name': section,
+                'namespace': db_config.get(section, 'namespace', fallback='dbo'),
+                'ker': db_config.get(section, 'ker', fallback='0'),
+                'host': db_config.get(section, 'host', fallback=''),
+            })
+    return result
 def open_hbase(dbname):
     T1 = T2 = 0#;exc_thd, rcv_thd = config.get(dbname, 'exec_threads'), config.get(dbname,'recv_threads')  # hbase_client DRIVER
     ifKerberos = config.get(dbname, 'ker');principal = config.get(dbname, 'principle');keytab = config.get(dbname, 'kpath')
-    zk_host,zk_port,parent=config.get(dbname,'host'),config.get(dbname,'zk_port'),config.get(dbname,'znode_parent')
+    zk_host=config.get(dbname,'zk_host',fallback=config.get(dbname,'host'))
+    zk_port=config.get(dbname,'zk_port',fallback='2181')
+    parent=config.get(dbname,'znode_parent',fallback='/hbase')
     try:
         T1 = time.perf_counter()
         jars = [os.path.join("lib/hbase", i) for i in os.listdir("lib/hbase") if i.endswith(".jar")]
@@ -163,7 +183,8 @@ class connFactory():
         return result
     def browse_one_tb(self,tbname,limit=200):#浏览器专用方法
         conn=self.conn
-        tbno=0;final=[]
+        tbno=0;final=[];rows=[];columns=[]
+        table=None;scanner=None
         try:
             sctbname=f'{self.schema}:'+tbname;tbno+=1
             scan = self.Scan()
@@ -173,23 +194,36 @@ class connFactory():
             for result in scanner:
                 rowkey = self.Bytes.toString(result.getRow())#1
                 #colkey = n
-                row_data = {}
+                row_data = {'__rowkey__': str(rowkey)}
                 for cell in result.listCells():
                     cf = self.Bytes.toString(cell.getFamilyArray(), cell.getFamilyOffset(), cell.getFamilyLength())
-                    qual = self.Bytes.toString(cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength())
-                    val = self.Bytes.toString(cell.getValueArray(), cell.getValueOffset(), cell.getValueLength())
+                    qual = str(self.Bytes.toString(cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength()))
+                    val = str(self.Bytes.toString(cell.getValueArray(), cell.getValueOffset(), cell.getValueLength()))
                     row_data[f"{qual}"] = val
                 if len(row_data)>n:n+=1
                 else:n=len(row_data)#记录最多字段行，n是tmp列表的索引
                 tmp.append(row_data.copy())
-            scanner.close()
-            table.close()
+                if limit and len(tmp) >= limit:
+                    break
             result_dict['tab_col'],new_value['tab_col'] = self.pret_col(tmp,n);result_dict['tab_name']=tbname;result_dict['tab_num']=tbno
             final.append(result_dict)
+            columns = ['__rowkey__']
+            for item in result_dict['tab_col']:
+                if item['col_name'] != '__rowkey__' and item['col_name'] not in columns:
+                    columns.append(item['col_name'])
+            for item in tmp:
+                for key in item.keys():
+                    if key not in columns:
+                        columns.append(key)
+            for item in tmp:
+                rows.append([item.get(col, '') for col in columns])
             #print(final)
-            return tbno,final
+            return {'tab_num': tbno, 'tables': final, 'columns': columns, 'rows': rows}
         finally:
-            pass
+            if scanner is not None:
+                scanner.close()
+            if table is not None:
+                table.close()
     def get_conn(self,dbname):
         return open_hbase(dbname)
 

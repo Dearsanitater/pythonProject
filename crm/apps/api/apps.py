@@ -3,15 +3,17 @@ import os,json,pandas
 import openpyxl
 import multiprocessing
 from multiprocessing import Queue,Process,Manager,Event
+from multiprocessing.connection import Listener, Client
 import queue
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-import threading,sys
+import threading,sys,time
 import ptest,process_test,configparser,sqlite3,uuid
 from concurrent.futures import ProcessPoolExecutor
-from django.http import JsonResponse,HttpResponse,FileResponse
+from django.http import JsonResponse,HttpResponse,FileResponse,StreamingHttpResponse
 from django.shortcuts import render,redirect
 from django.conf import settings
+import hbase_conn
 os.chdir(settings.BASE_DIR)
 config_file=r'resource/rule_config.ini'
 MEDIA_PATH = os.getenv("EXCEL_MEDIA_PATH", "resource/test_report/report.xlsx")
@@ -19,6 +21,215 @@ OUTPUT_PATH = os.getenv("EXCEL_OUTPUT_PATH", "resource/test_report/tmp.xlsx")
 process_pool = ProcessPoolExecutor(max_workers=4)
 #conn = sqlite3.connect('identifier.sqlite')
 exec_task={"rule_id":None}
+DB_CONFIG_PATH = r'resource/DB.ini'
+WORKER_AUTHKEY = b'hbase-worker'
+WORKER_LOCK = threading.Lock()
+WORKERS = {
+    '0': {'name': 'no_ker', 'address': ('127.0.0.1', 61201), 'process': None},
+    '1': {'name': 'ker', 'address': ('127.0.0.1', 61202), 'process': None},
+}
+
+
+def _read_db_ini():
+    cfg = configparser.ConfigParser(interpolation=None)
+    cfg.read(DB_CONFIG_PATH, encoding='utf-8')
+    return cfg
+
+
+def _get_hbase_section(dbname):
+    cfg = _read_db_ini()
+    if not cfg.has_section(dbname):
+        raise KeyError(f'未找到数据源 {dbname}')
+    if cfg.get(dbname, 'type', fallback='').lower() != 'hbase':
+        raise ValueError(f'{dbname} 不是 hbase 数据源')
+    return {
+        'name': dbname,
+        'namespace': cfg.get(dbname, 'namespace', fallback='default'),
+        'ker': cfg.get(dbname, 'ker', fallback='0'),
+        'host': cfg.get(dbname, 'host', fallback=''),
+    }
+
+
+def _serialize_worker_error(message):
+    return {'status': 'error', 'message': str(message)}
+
+
+def _hbase_worker_main(worker_key, address, authkey):
+    os.chdir(settings.BASE_DIR)
+    hbase_conn.use_db_ini()
+    cache = {}
+    listener = Listener(address, authkey=authkey)
+    print(f"hbase {WORKERS[worker_key]['name']} worker listening on {address}")
+    while True:
+        conn = listener.accept()
+        try:
+            payload = conn.recv()
+            action = payload.get('action')
+            if action == 'shutdown':
+                conn.send({'status': 'success'})
+                break
+            dbname = payload.get('dbname')
+            section = _get_hbase_section(dbname)
+            if section['ker'] != worker_key:
+                conn.send(_serialize_worker_error(f"{dbname} 应由 {'kerberos' if section['ker'] == '1' else 'non-kerberos'} worker 处理"))
+                continue
+            if dbname not in cache:
+                cache[dbname] = hbase_conn.connFactory(dbname)
+            hc = cache[dbname]
+            if action == 'connect':
+                tables = hc.hb_tab()
+                conn.send({
+                    'status': 'success',
+                    'dbname': dbname,
+                    'namespace': section['namespace'],
+                    'table_count': len(tables),
+                })
+            elif action == 'tree':
+                conn.send({
+                    'status': 'success',
+                    'dbname': dbname,
+                    'namespace': section['namespace'],
+                    'tables': hc.hb_tab(),
+                })
+            elif action == 'scan':
+                table = payload.get('table')
+                limit = int(payload.get('limit', 200))
+                result = hc.browse_one_tb(table, limit=limit)
+                conn.send({
+                    'status': 'success',
+                    'dbname': dbname,
+                    'namespace': section['namespace'],
+                    'table': table,
+                    'limit': limit,
+                    'result': result,
+                })
+            else:
+                conn.send(_serialize_worker_error(f'未知 action: {action}'))
+        except Exception as e:
+            try:
+                conn.send(_serialize_worker_error(e))
+            except Exception:
+                pass
+        finally:
+            conn.close()
+    listener.close()
+
+
+def _ensure_hbase_worker(worker_key):
+    with WORKER_LOCK:
+        worker = WORKERS[worker_key]
+        process = worker['process']
+        if process is not None and process.is_alive():
+            return
+        process = Process(
+            target=_hbase_worker_main,
+            args=(worker_key, worker['address'], WORKER_AUTHKEY),
+            daemon=True,
+        )
+        process.start()
+        worker['process'] = process
+    for _ in range(20):
+        try:
+            conn = Client(WORKERS[worker_key]['address'], authkey=WORKER_AUTHKEY)
+            conn.close()
+            return
+        except Exception:
+            time.sleep(0.2)
+    raise RuntimeError(f"{WORKERS[worker_key]['name']} worker 启动失败")
+
+
+def _call_hbase_worker(worker_key, payload):
+    _ensure_hbase_worker(worker_key)
+    conn = Client(WORKERS[worker_key]['address'], authkey=WORKER_AUTHKEY)
+    try:
+        conn.send(payload)
+        return conn.recv()
+    finally:
+        conn.close()
+
+
+def hbase_browser(request):
+    return render(request, 'hbase_browser.html')
+
+
+def hbase_sources(request):
+    cfg = _read_db_ini()
+    sources = []
+    for section in cfg.sections():
+        if cfg.get(section, 'type', fallback='').lower() == 'hbase':
+            sources.append({
+                'name': section,
+                'namespace': cfg.get(section, 'namespace', fallback='default'),
+                'ker': cfg.get(section, 'ker', fallback='0'),
+                'host': cfg.get(section, 'host', fallback=''),
+            })
+    return JsonResponse({'status': 'success', 'sources': sources})
+
+
+def hbase_connect(request):
+    dbname = request.GET.get('dbname', '').strip()
+    if not dbname:
+        return JsonResponse({'status': 'error', 'message': '缺少 dbname'}, status=400)
+    try:
+        section = _get_hbase_section(dbname)
+        result = _call_hbase_worker(section['ker'], {'action': 'connect', 'dbname': dbname})
+        status = 200 if result.get('status') == 'success' else 500
+        return JsonResponse(result, status=status)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+
+def hbase_tree(request):
+    dbname = request.GET.get('dbname', '').strip()
+    if not dbname:
+        return JsonResponse({'status': 'error', 'message': '缺少 dbname'}, status=400)
+    try:
+        section = _get_hbase_section(dbname)
+        result = _call_hbase_worker(section['ker'], {'action': 'tree', 'dbname': dbname})
+        status = 200 if result.get('status') == 'success' else 500
+        return JsonResponse(result, status=status)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+
+def hbase_scan(request):
+    dbname = request.GET.get('dbname', '').strip()
+    table = request.GET.get('table', '').strip()
+    limit = int(request.GET.get('limit', 200))
+    if not dbname or not table:
+        return JsonResponse({'status': 'error', 'message': '缺少 dbname 或 table'}, status=400)
+    try:
+        section = _get_hbase_section(dbname)
+        result = _call_hbase_worker(
+            section['ker'],
+            {'action': 'scan', 'dbname': dbname, 'table': table, 'limit': limit},
+        )
+    except Exception as e:
+        result = {'status': 'error', 'message': str(e)}
+
+    def generate():
+        if result.get('status') != 'success':
+            yield json.dumps({'type': 'error', 'message': result.get('message', 'scan failed')}, ensure_ascii=False) + '\n'
+            return
+        payload = result['result']
+        columns = payload.get('columns', [])
+        rows = payload.get('rows', [])
+        yield json.dumps({
+            'type': 'meta',
+            'dbname': dbname,
+            'namespace': result.get('namespace', ''),
+            'table': table,
+            'limit': limit,
+            'columns': columns,
+        }, ensure_ascii=False) + '\n'
+        for row in rows:
+            row_dict = {}
+            for index, column in enumerate(columns):
+                row_dict[column] = row[index] if index < len(row) else ''
+            yield json.dumps({'type': 'row', 'row': row_dict}, ensure_ascii=False) + '\n'
+        yield json.dumps({'type': 'done', 'rows': len(rows)}, ensure_ascii=False) + '\n'
+
+    return StreamingHttpResponse(generate(), content_type='application/x-ndjson; charset=utf-8')
 
 
 def exec_switch(request,rule_id):

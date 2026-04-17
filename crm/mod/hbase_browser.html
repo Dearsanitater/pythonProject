@@ -106,7 +106,7 @@
             min-height: 0;
             flex: 1;
             display: grid;
-            grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+            grid-template-columns: minmax(220px, var(--sidebar-width)) 10px minmax(0, 1fr);
             gap: 16px;
         }
 
@@ -145,6 +145,14 @@
             min-height: 0;
         }
 
+        .sidebar-resizer {
+            width: 10px;
+            cursor: col-resize;
+            border-radius: 999px;
+            background:
+                linear-gradient(180deg, transparent 0%, transparent 30%, #c7d2de 30%, #c7d2de 70%, transparent 70%, transparent 100%);
+        }
+
         .tree-wrap {
             padding: 12px;
             overflow: auto;
@@ -176,7 +184,7 @@
             align-items: center;
             justify-content: space-between;
             gap: 10px;
-            padding: 10px 12px;
+            padding: 8px 12px;
             cursor: pointer;
             user-select: none;
         }
@@ -207,7 +215,7 @@
         .tree-list {
             list-style: none;
             margin: 0;
-            padding: 8px 10px 10px 10px;
+            padding: 6px 10px 8px 10px;
         }
 
         .tree-list ul {
@@ -217,19 +225,37 @@
             border-left: 1px dashed #d8dee4;
         }
 
+        .tree-list.collapsed,
+        .tree-list ul.collapsed {
+            display: none;
+        }
+
         .table-item {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 10px;
-            padding: 8px 12px;
+            min-height: 30px;
+            padding: 5px 10px;
             border-radius: 10px;
             cursor: pointer;
+        }
+
+        .table-item .mono {
+            font-size: 12px;
+            line-height: 1.25;
         }
 
         .table-item.active {
             background: var(--accent-soft);
             color: #0550ae;
+        }
+
+        .tree-toggle {
+            min-width: 40px;
+            text-align: right;
+            font-size: 12px;
+            color: var(--muted);
         }
 
         .workspace-main {
@@ -402,6 +428,10 @@
             .sidebar {
                 max-height: 260px;
             }
+
+            .sidebar-resizer {
+                display: none;
+            }
         }
     </style>
 </head>
@@ -432,6 +462,8 @@
                 <div class="empty">先选择一个 HBase 数据源并点击“连接”</div>
             </div>
         </aside>
+
+        <div class="sidebar-resizer" id="sidebarDivider" title="拖拽调整左侧连接列表宽度"></div>
 
         <main class="workspace-main panel">
             <div class="vertical-stack" id="verticalStack">
@@ -487,6 +519,8 @@
         columns: ["__rowkey__"],
         renderScheduled: false,
         scanController: null,
+        collapsedConnections: new Set(),
+        collapsedNamespaces: new Set(),
     };
 
     const sourceSelect = document.getElementById("sourceSelect");
@@ -610,6 +644,92 @@
             treeWrap.appendChild(card);
         }
     }
+
+    renderTree = function() {
+        if (!state.connections.size) {
+            treeWrap.innerHTML = '<div class="empty">先选择一个 HBase 数据源并点击“连接”</div>';
+            return;
+        }
+
+        treeWrap.innerHTML = "";
+        for (const [dbname, info] of state.connections.entries()) {
+            const connKey = `${dbname}`;
+            const nsKey = `${dbname}:${info.namespace}`;
+            const card = document.createElement("div");
+            card.className = "conn-card";
+
+            const header = document.createElement("div");
+            header.className = "conn-header";
+            header.innerHTML = `
+                <div>
+                    <div class="conn-name">${dbname}</div>
+                    <div class="conn-meta">${info.namespace} / ${info.tables.length} tables</div>
+                </div>
+                <div class="tree-toggle">${state.collapsedConnections.has(connKey) ? "展开" : "收起"}</div>
+            `;
+
+            const list = document.createElement("div");
+            list.className = "tree-list";
+            if (state.collapsedConnections.has(connKey)) {
+                list.classList.add("collapsed");
+            }
+
+            const namespaceBlock = document.createElement("div");
+            const nsHeader = document.createElement("div");
+            nsHeader.className = "node-header";
+            nsHeader.innerHTML = `
+                <div>
+                    <div class="node-title">${info.namespace}</div>
+                    <div class="table-meta">Namespace</div>
+                </div>
+                <div class="tree-toggle">${state.collapsedNamespaces.has(nsKey) ? "展开" : "收起"}</div>
+            `;
+
+            const tableList = document.createElement("ul");
+            if (state.collapsedNamespaces.has(nsKey)) {
+                tableList.classList.add("collapsed");
+            }
+
+            for (const table of info.tables) {
+                const item = document.createElement("li");
+                item.className = "table-item";
+                if (state.activeDb === dbname && state.activeTable === table) {
+                    item.classList.add("active");
+                }
+                item.innerHTML = `
+                    <span class="mono">${table}</span>
+                    <span class="table-meta">双击打开</span>
+                `;
+                item.addEventListener("dblclick", () => openTable(dbname, table));
+                tableList.appendChild(item);
+            }
+
+            header.addEventListener("click", () => {
+                if (state.collapsedConnections.has(connKey)) {
+                    state.collapsedConnections.delete(connKey);
+                } else {
+                    state.collapsedConnections.add(connKey);
+                }
+                renderTree();
+            });
+
+            nsHeader.addEventListener("click", () => {
+                if (state.collapsedNamespaces.has(nsKey)) {
+                    state.collapsedNamespaces.delete(nsKey);
+                } else {
+                    state.collapsedNamespaces.add(nsKey);
+                }
+                renderTree();
+            });
+
+            namespaceBlock.appendChild(nsHeader);
+            namespaceBlock.appendChild(tableList);
+            list.appendChild(namespaceBlock);
+            card.appendChild(header);
+            card.appendChild(list);
+            treeWrap.appendChild(card);
+        }
+    };
 
     function resetTableState() {
         state.rows = [];
@@ -772,8 +892,38 @@
         });
     }
 
+    function setupSidebarResizer() {
+        const divider = document.getElementById("sidebarDivider");
+        const workspace = document.querySelector(".workspace");
+        let dragging = false;
+
+        if (!divider || !workspace) {
+            return;
+        }
+
+        divider.addEventListener("mousedown", () => {
+            dragging = true;
+            document.body.style.userSelect = "none";
+        });
+
+        window.addEventListener("mousemove", (event) => {
+            if (!dragging || window.innerWidth <= 1080) {
+                return;
+            }
+            const rect = workspace.getBoundingClientRect();
+            const width = Math.max(220, Math.min(event.clientX - rect.left, 520));
+            workspace.style.setProperty("--sidebar-width", `${width}px`);
+        });
+
+        window.addEventListener("mouseup", () => {
+            dragging = false;
+            document.body.style.userSelect = "";
+        });
+    }
+
     connectBtn.addEventListener("click", connectSource);
     setupResizer();
+    setupSidebarResizer();
     loadSources();
 </script>
 </body>
