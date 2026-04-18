@@ -99,7 +99,7 @@ def start_comp(args, control=None):
     print(f'进程号{os.getpid()}执行开始,更改输出流至queuemaintainer')
     #old_stdout = sys.stdout  # 更改输出流
     #sys.stdout = apps.QueueMaintainer(args['rule_id'], os.getpid(), args['usrid'])
-    print(f'进程号{os.getpid()},更改输出流完毕')
+    print(f'进程号{os.getpid()},更改输出流完毕')#看情况选择是否需要工厂模式提供连接，部分数据库可能不支持
     print(f'进程号{os.getpid()}执行完毕，s总共耗时：\t\t毫秒')
     #p=compare.ergodic_database()
     p=cr.ergodic_database()#djgano选用工厂提供连接
