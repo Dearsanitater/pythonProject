@@ -38,6 +38,10 @@ urlpatterns = [
     path('rule/exec/<str:rule_id>/',apps.exec_switch),
     path('rule/comp/<str:rule_id>/',apps.exec_compare),
     path('rule/shut/<str:rule_id>/',apps.shut_rule),
+    path('rule/pause/<str:rule_id>/',apps.pause_rule),
+    path('rule/resume/<str:rule_id>/',apps.resume_rule),
+    path('rule/kill/<str:rule_id>/',apps.kill_rule),
+    path('rule/status/<str:rule_id>/',apps.task_status),
     path('get/data',vapi.ajaxGetTxt),
     #DB资源界面相关操作
     path('config/del/<str:dbname>',apps.del_config),

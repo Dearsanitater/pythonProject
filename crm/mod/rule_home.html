@@ -159,18 +159,18 @@
                     <div><strong>Source:</strong> {{ rule.src }}</div>
                     <div><strong>Target:</strong> {{ rule.tgt }}</div>
                 </div>
-
                 <!-- 按钮部分 -->
                 <div class="buttons">
                     <a href="javascript:void(0)" onclick="editRule('{{ rule.rule_id }}')">Edit</a>
                     <a href="javascript:void(0)" onclick="deleteRule('{{ rule.rule_id }}')">Delete</a>
                     <a href="javascript:void(0)" onclick="executeScript('{{ rule.rule_id }}')">Execute Script</a>
+                    <a href="javascript:void(0)" onclick="pauseTask('{{ rule.rule_id }}')">Pause</a>
+                    <a href="javascript:void(0)" onclick="resumeTask('{{ rule.rule_id }}')">Resume</a>
                     <a href="javascript:void(0)" onclick="executeShut('{{ rule.rule_id }}')">SHuT</a>
                     <a href="javascript:void(0)" onclick="executeCompare('{{ rule.rule_id }}')">Compare</a>
                     <a href="javascript:void(0)" onclick="clearSource('{{ rule.rule_id }}')">Clear Source</a>
                 </div>
             </div>
-
             <!-- 空白区域，用于显示实时回传信息 -->
             <div id="details-{{ rule.rule_id }}" class="details">
                 <pre id="log-{{ rule.rule_id }}"></pre>
@@ -182,123 +182,173 @@
     </div>
 
     <script>
-        // 新建规则按钮的功能
         function createRule() {
             window.location.href = "create_rule/";
         }
-        function getConfig() {//获取数据库节点
+        function getConfig() {
             window.location.href = "../config/";
         }
-        function getDetail() {//获取数据库节点
+        function getDetail() {
             window.location.href = "detail/0/";
         }
-        function goHbase() {//获取数据库节点
+        function goHbase() {
             window.location.href = "/select/hbase";
         }
-        // 编辑规则
         function editRule(ruleId) {
             window.location.href = `ch_rule/${ruleId}/`;
         }
-
-        // 删除规则
+        function getCsrfToken() {
+            return "{{ csrf_token }}";
+        }
+        function processMessage(ruleId, message) {
+            const logDiv = document.getElementById(`log-${ruleId}`);
+            if (!logDiv) {
+                return;
+            }
+            const currentTime = new Date().toLocaleTimeString();
+            logDiv.textContent += `[${currentTime}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        function formatTaskMessage(payload) {
+            if (!payload) {
+                return "未返回任务信息";
+            }
+            const task = payload.task || {};
+            const parts = [];
+            if (payload.message) {
+                parts.push(payload.message);
+            }
+            if (task.task_type) {
+                parts.push(`type=${task.task_type}`);
+            }
+            if (task.status) {
+                parts.push(`status=${task.status}`);
+            }
+            if (task.pid) {
+                parts.push(`pid=${task.pid}`);
+            }
+            return parts.join(" | ");
+        }
+        async function callTaskApi(url, method = "POST") {
+            const response = await fetch(url, {
+                method,
+                headers: {
+                    "X-CSRFToken": getCsrfToken(),
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "application/json"
+                }
+            });
+            const payload = await response.json();
+            if (!response.ok || payload.status === "error" || payload.error) {
+                throw new Error(payload.message || payload.error || "请求失败");
+            }
+            return payload;
+        }
         function deleteRule(ruleId) {
             if (confirm("Are you sure you want to delete this rule?")) {
                 fetch(`del_rule/${ruleId}/`, {
-                    method: 'POST',
-                    headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+                    method: "POST",
+                    headers: { "X-CSRFToken": getCsrfToken() }
                 }).then(response => {
                     if (response.ok) {
-                        alert('Rule deleted successfully!');
-                        window.location.reload(); // 刷新页面
+                        alert("Rule deleted successfully!");
+                        window.location.reload();
                     } else {
-                        alert('Failed to delete rule.');
+                        alert("Failed to delete rule.");
                     }
                 });
             }
         }
-
-        // 执行脚本
-        function executeScript(ruleId) {
-            alert(`Executing script for rule ${ruleId}`);
-            window.location.href = `exec/${ruleId}/`;
-            // 发送请求执行脚本（实际需要后端支持）
+        async function executeScript(ruleId) {
+            try {
+                const payload = await callTaskApi(`exec/${ruleId}/`);
+                const message = formatTaskMessage(payload);
+                processMessage(ruleId, message);
+                alert(message);
+            } catch (err) {
+                alert(`启动脚本失败: ${err.message}`);
+            }
         }
-        function executeShut(ruleId) {
-            //alert(`SHUT rule ${ruleId}`);
-            //window.location.href = `shut/${ruleId}/`;
-            fetch(`shut/${ruleId}/`, {
-                method: "POST"  // 只指定 POST
-            })
-                .then(response => response.json())  // 如果后端返回 JsonResponse
-                .then(data => {
-                    if (data.error) {
-                        alert(`错误 ${data.error}: ${data.message}`);
-                    } else {
-                        console.log("操作成功", data);
-                    }
-                })
-                .catch(err => {
-                    console.error("请求失败", err);
-                });        // 发送请求执行脚本（实际需要后端支持）
-
-            //调用compare执行表比较
-            function executeCompare(ruleId) {
-                alert(`Executing compare for rule ${ruleId}`);
-                window.location.href = `comp/${ruleId}/`;
-                // 发送请求执行脚本（实际需要后端支持）
+        async function executeCompare(ruleId) {
+            try {
+                const payload = await callTaskApi(`comp/${ruleId}/`);
+                const message = formatTaskMessage(payload);
+                processMessage(ruleId, message);
+                alert(message);
+            } catch (err) {
+                alert(`启动比对失败: ${err.message}`);
             }
-
-            // 清空源库
-            function clearSource(ruleId) {
-                alert(`Clearing source for rule ${ruleId}`);
-                // 发送请求清空源库（实际需要后端支持）
+        }
+        async function executeShut(ruleId) {
+            try {
+                const payload = await callTaskApi(`shut/${ruleId}/`);
+                const message = formatTaskMessage(payload);
+                processMessage(ruleId, message);
+                alert(message);
+            } catch (err) {
+                alert(`停止任务失败: ${err.message}`);
             }
-
-            // 切换显示/隐藏回传信息区域
-            function toggleDetails(ruleId) {
-                const detailsDiv = document.getElementById(`details-${ruleId}`);
-                if (detailsDiv.style.display === "none" || detailsDiv.style.display === "") {
-                    detailsDiv.style.display = "block";
-                } else {
-                    detailsDiv.style.display = "none";
-                }
+        }
+        async function pauseTask(ruleId) {
+            try {
+                const payload = await callTaskApi(`pause/${ruleId}/`);
+                processMessage(ruleId, formatTaskMessage(payload));
+            } catch (err) {
+                alert(`暂停失败: ${err.message}`);
             }
-
-            // 模拟接收回传信息并显示
-            function processMessage(ruleId, message) {
-                const logDiv = document.getElementById(`log-${ruleId}`);
-                const currentTime = new Date().toLocaleTimeString();
-                logDiv.textContent += `[${currentTime}] ${message}\n`;
-                logDiv.scrollTop = logDiv.scrollHeight; // 滚动到底部显示最新消息
+        }
+        async function resumeTask(ruleId) {
+            try {
+                const payload = await callTaskApi(`resume/${ruleId}/`);
+                processMessage(ruleId, formatTaskMessage(payload));
+            } catch (err) {
+                alert(`继续失败: ${err.message}`);
             }
+        }
 
-            // WebSocket 连接用户，并接收消息
-            function connectWebSocket() {
-                const socket = new WebSocket(`ws://192.168.62.130:8000/ws/message/`);
-
-                // 当 WebSocket 接收到消息时调用
-                socket.onmessage = function (event) {
-                    const data = JSON.parse(event.data);
-                    const message = data.message;
-                    const ruleId = data.rule_id;  // 假设消息中带有规则 ID
-                    processMessage(ruleId, message);  // 通过规则 ID 输出到对应区域
-                };
-
-                socket.onclose = function (event) {
-                    console.error("WebSocket closed unexpectedly");
-                };
+        async function killTask(ruleId) {
+            try {
+                const payload = await callTaskApi(`kill/${ruleId}/`);
+                processMessage(ruleId, formatTaskMessage(payload));
+            } catch (err) {
+                alert(`杀停失败: ${err.message}`);
             }
-
-// 初始化 WebSocket 连接
-            document.addEventListener('DOMContentLoaded', function () {
-                //const userId = "{{ user.id }}";  // 从模板中获取当前用户 ID
-                connectWebSocket();  // 为当前用户建立 WebSocket 连接
-            });
-
-
-            // 启动消息接收模拟
-            setInterval(simulateMessageReception, 3000);
-        }// 每3秒模拟一次消息接收
+        }
+        async function queryTaskStatus(ruleId) {
+            try {
+                const payload = await callTaskApi(`status/${ruleId}/`, "GET");
+                const message = formatTaskMessage(payload);
+                processMessage(ruleId, message);
+                return payload;
+            } catch (err) {
+                alert(`获取状态失败: ${err.message}`);
+                return null;
+            }
+        }
+        function clearSource(ruleId) {
+            alert(`Clearing source for rule ${ruleId}`);
+        }
+        function toggleDetails(ruleId) {
+            const detailsDiv = document.getElementById(`details-${ruleId}`);
+            if (detailsDiv.style.display === "none" || detailsDiv.style.display === "") {
+                detailsDiv.style.display = "block";
+            } else {
+                detailsDiv.style.display = "none";
+            }
+        }
+        function connectWebSocket() {
+            const socket = new WebSocket(`ws://192.168.62.130:8000/ws/message/`);
+            socket.onmessage = function (event) {
+                const data = JSON.parse(event.data);
+                processMessage(data.rule_id, data.message);
+            };
+            socket.onclose = function () {
+                console.error("WebSocket closed unexpectedly");
+            };
+        }
+        document.addEventListener("DOMContentLoaded", function () {
+            connectWebSocket();
+        });
     </script>
 
 </body>

@@ -247,6 +247,8 @@ class read_case():
             self.current_cursor = db2_conn(conn)
             conn = self.current_cursor
         print('正在执行用例文件：\t%s\t\t\tcase数：%d' % (self.addr, self.numer))
+        if self._check_control(event, f'用例文件 {self.addr}'):
+            return
         T1 = time.perf_counter()
         if self.pre_crt == 1:
             crtlist = []
@@ -266,6 +268,8 @@ class read_case():
                     if bool(re.sub('\n','',item)):
                         self.current_cursor.execute(item)
                         conn.commit();print(item,'0.2s');time.sleep(crt_delay)
+                        if self._check_control(event, '建表预处理'):
+                            return
                     else:
                         continue
                 except None or (pyodbc.ProgrammingError,pymssql._pymssql.OperationalError, psycopg2.Error, pymssql.Error, pymysql.Error,cx_Oracle.Error) as e:
@@ -274,6 +278,8 @@ class read_case():
         else:
             pass
         for i in range(self.numer):
+            if self._check_control(event, f'case {self.sqllist[i]["casename"]}'):
+                return
             print('%s' % self.sqllist[i]['casename'], '\t\t\t进度：%d/%d' % (i + 1, self.numer))
             T2 = time.perf_counter();new = old = ''
             if '^p' not in self.sqllist[i]['dml']:
@@ -293,6 +299,8 @@ class read_case():
                         conn.commit()
                         time.sleep(1)
                         print( re.sub('\n', '', b))
+                        if self._check_control(event, f'case {self.sqllist[i]["casename"]} 前置SQL'):
+                            return
                     except None or (pymssql._pymssql.OperationalError, psycopg2.Error, pymssql.Error, pymysql.Error,
                                     cx_Oracle.Error) as e:
                         if self.src in ('mssql', 'sqlserver'):
@@ -325,6 +333,8 @@ class read_case():
                         self.current_cursor.execute(caseline)
                         conn.commit()
                     k += 1
+                    if self._check_control(event, f'case {self.sqllist[i]["casename"]} SQL执行'):
+                        return
                     if self.type == 'db2_as400' and 'create table' in caseline.lower():
                         print('as400建表多等5s')
                     elif 'create table' in caseline.lower():
@@ -562,11 +572,42 @@ class read_case():
     def interruptible_sleep(self,stop_event, total_seconds):
         interval = 0.5  # 每半秒检查一次
         for _ in range(int(total_seconds / interval)):
-            if stop_event and stop_event.is_set():
-                print("Stop detected during sleep")
+            if self._check_control(stop_event, '等待阶段'):
                 return
-            else:pass
             time.sleep(interval)
+
+    def _get_stop_event(self, control):
+        if control and hasattr(control, 'is_set'):
+            return control
+        if isinstance(control, dict):
+            return control.get('stop_event')
+        return None
+
+    def _get_resume_event(self, control):
+        if isinstance(control, dict):
+            return control.get('resume_event')
+        return None
+
+    def _check_control(self, control, label='任务'):
+        stop_event = self._get_stop_event(control)
+        resume_event = self._get_resume_event(control)
+        if stop_event and stop_event.is_set():
+            print(f'{label} 收到停止指令')
+            return True
+        if not resume_event:
+            return False
+        notified = False
+        while not resume_event.is_set():
+            if stop_event and stop_event.is_set():
+                print(f'{label} 收到停止指令')
+                return True
+            if not notified:
+                print(f'{label} 已暂停，等待继续')
+                notified = True
+            time.sleep(0.5)
+        if notified:
+            print(f'{label} 已继续')
+        return False
 # 建表延迟
 crt_delay = 1
 # dml/ddl延迟

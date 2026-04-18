@@ -109,12 +109,10 @@ class ergodic_database(compare.ergodic_database):
             "ob_mysql",
         }:
             return self._collect_schema(db_key, role, db_type)
-
         if role == "src":
             self.conf_src = db_type
         else:
             self.conf_tgt = db_type
-
         if db_type == "hdfs":
             return super().hdfs_tab()
         if db_type == "hbase":

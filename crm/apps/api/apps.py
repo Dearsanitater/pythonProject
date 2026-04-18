@@ -20,7 +20,7 @@ MEDIA_PATH = os.getenv("EXCEL_MEDIA_PATH", "resource/test_report/report.xlsx")
 OUTPUT_PATH = os.getenv("EXCEL_OUTPUT_PATH", "resource/test_report/tmp.xlsx")
 process_pool = ProcessPoolExecutor(max_workers=4)
 #conn = sqlite3.connect('identifier.sqlite')
-exec_task={"rule_id":None}
+exec_task={}
 DB_CONFIG_PATH = r'resource/DB.ini'
 WORKER_AUTHKEY = b'hbase-worker'
 WORKER_LOCK = threading.Lock()
@@ -28,6 +28,77 @@ WORKERS = {
     '0': {'name': 'no_ker', 'address': ('127.0.0.1', 61201), 'process': None},
     '1': {'name': 'ker', 'address': ('127.0.0.1', 61202), 'process': None},
 }
+
+
+def _build_task_control():
+    stop_event = Event()
+    resume_event = Event()
+    resume_event.set()
+    return stop_event, resume_event
+
+
+def _refresh_task(rule_id):
+    task = exec_task.get(rule_id)
+    if not task:
+        return None
+    process = task.get('process')
+    if process and not process.is_alive() and task.get('status') not in ('finished', 'killed'):
+        task['status'] = 'finished'
+        task['finished_at'] = time.time()
+    return task
+
+
+def _serialize_task(rule_id, task):
+    process = task.get('process')
+    return {
+        'rule_id': rule_id,
+        'task_type': task.get('task_type'),
+        'pid': task.get('pid'),
+        'status': task.get('status'),
+        'is_alive': bool(process and process.is_alive()),
+        'started_at': task.get('started_at'),
+        'finished_at': task.get('finished_at'),
+    }
+
+
+def _get_running_task(rule_id):
+    task = _refresh_task(rule_id)
+    if not task:
+        return None
+    process = task.get('process')
+    if process and process.is_alive():
+        return task
+    return None
+
+
+def _register_task(rule_id, task_type, process, stop_event, resume_event):
+    exec_task[rule_id] = {
+        'process': process,
+        'pid': process.pid,
+        'task_type': task_type,
+        'stop_event': stop_event,
+        'resume_event': resume_event,
+        'status': 'running',
+        'started_at': time.time(),
+        'finished_at': None,
+    }
+    return exec_task[rule_id]
+
+
+def _update_task_status(task, status):
+    task['status'] = status
+    if status in ('finished', 'killed'):
+        task['finished_at'] = time.time()
+
+
+def _task_not_found(rule_id):
+    return JsonResponse({'status': 'error', 'message': f'规则 {rule_id} 没有运行中的任务'}, status=404)
+
+
+def _wants_json(request):
+    accept = request.headers.get('Accept', '')
+    requested_with = request.headers.get('X-Requested-With', '')
+    return 'application/json' in accept or requested_with == 'XMLHttpRequest'
 
 
 def _read_db_ini():
@@ -238,32 +309,40 @@ def hbase_scan(request):
 
 
 def exec_switch(request,rule_id):
+    running_task = _get_running_task(rule_id)
+    if running_task:
+        return JsonResponse({'status': 'error', 'message': f'规则 {rule_id} 已有运行中的任务'}, status=409)
 
-    #future = process_pool.submit(ptest.incr_switch,ptest.rule(rule_id,'s'))
-    stop_event = Event()
+    stop_event, resume_event = _build_task_control()
     rule_obj=ptest.rule(rule_id,'s')
-    p = Process(target=ptest.incr_switch, args=(rule_obj,stop_event))
+    control = {'stop_event': stop_event, 'resume_event': resume_event}
+    p = Process(target=ptest.incr_switch, args=(rule_obj,control))
     p.start()
     try:
-        task_id=p.pid
-        print('已加入进程池',task_id)
-        exec_task[rule_id] = {
-            "future": p,'pid':task_id,'stop_event':stop_event
-        }
+        task = _register_task(rule_id, 'switch', p, stop_event, resume_event)
+        print('已加入进程池',task['pid'])
     except Exception as e:
         return JsonResponse({"error": "未知错误", "message": str(e)})
+    if _wants_json(request):
+        return JsonResponse({'status': 'success', 'message': '脚本任务已启动', 'task': _serialize_task(rule_id, task)}, status=200)
     return redirect('/rule')
 def exec_compare(request,rule_id):
-    future = process_pool.submit(ptest.start_comp, ptest.rule(rule_id, 'd'))
+    running_task = _get_running_task(rule_id)
+    if running_task:
+        return JsonResponse({'status': 'error', 'message': f'规则 {rule_id} 已有运行中的任务'}, status=409)
+
+    stop_event, resume_event = _build_task_control()
+    rule_obj = ptest.rule(rule_id, 'd')
+    control = {'stop_event': stop_event, 'resume_event': resume_event}
+    p = Process(target=ptest.start_comp, args=(rule_obj, control))
+    p.start()
     try:
-        exec_task[rule_id] = {
-            "future": future,
-            "task_id": rule_id,
-        }
-        task_id=str(future)
-        print('已加入进程池',task_id)
+        task = _register_task(rule_id, 'compare', p, stop_event, resume_event)
+        print('已加入进程池',task['pid'])
     except Exception as e:
         return JsonResponse({"error": "未知错误", "message": str(e)})
+    if _wants_json(request):
+        return JsonResponse({'status': 'success', 'message': '比对任务已启动', 'task': _serialize_task(rule_id, task)}, status=200)
     return redirect('/rule')
 def create_rule(request):
     if request.method == 'POST':
@@ -373,15 +452,71 @@ def ch_rule():
     pass
 def shut_rule(request,rule_id):
     if request.method == 'POST':
-
-        if rule_id in list(exec_task.keys()):
-            exec_task[rule_id]['stop_event'].set()
-            exec_task[rule_id]['future'].join()
-            return JsonResponse({"ok":'ok',"message": '未运行'}, status=200)
-        else:
-            return JsonResponse({"error": "11", "message": '未运行'}, status=500)
+        task = _get_running_task(rule_id)
+        if not task:
+            return _task_not_found(rule_id)
+        task['stop_event'].set()
+        task['resume_event'].set()
+        _update_task_status(task, 'stopping')
+        return JsonResponse({'status': 'success', 'message': '已发送停止指令', 'task': _serialize_task(rule_id, task)}, status=200)
     else:
         return JsonResponse({"error": "11", "message": '错误访问方法'}, status=500)
+
+
+def pause_rule(request, rule_id):
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': '错误访问方法'}, status=405)
+    task = _get_running_task(rule_id)
+    if not task:
+        return _task_not_found(rule_id)
+    if task.get('status') == 'paused':
+        return JsonResponse({'status': 'success', 'message': '任务已经处于暂停状态', 'task': _serialize_task(rule_id, task)}, status=200)
+    task['resume_event'].clear()
+    _update_task_status(task, 'paused')
+    return JsonResponse({'status': 'success', 'message': '已发送暂停指令', 'task': _serialize_task(rule_id, task)}, status=200)
+
+
+def resume_rule(request, rule_id):
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': '错误访问方法'}, status=405)
+    task = _get_running_task(rule_id)
+    if not task:
+        return _task_not_found(rule_id)
+    if task.get('status') == 'stopping':
+        return JsonResponse({'status': 'error', 'message': '任务正在停止，不能继续'}, status=409)
+    task['resume_event'].set()
+    _update_task_status(task, 'running')
+    return JsonResponse({'status': 'success', 'message': '已恢复任务', 'task': _serialize_task(rule_id, task)}, status=200)
+
+
+def kill_rule(request, rule_id):
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': '错误访问方法'}, status=405)
+    task = _refresh_task(rule_id)
+    if not task:
+        return _task_not_found(rule_id)
+    process = task.get('process')
+    if not process or not process.is_alive():
+        return JsonResponse({'status': 'error', 'message': '任务未运行，无需强制终止', 'task': _serialize_task(rule_id, task)}, status=409)
+    if process and process.is_alive():
+        process.terminate()
+        process.join(timeout=2)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=2)
+    task['stop_event'].set()
+    task['resume_event'].set()
+    _update_task_status(task, 'killed')
+    return JsonResponse({'status': 'success', 'message': '任务已强制终止', 'task': _serialize_task(rule_id, task)}, status=200)
+
+
+def task_status(request, rule_id):
+    if request.method != 'GET':
+        return JsonResponse({'status': 'error', 'message': '错误访问方法'}, status=405)
+    task = _refresh_task(rule_id)
+    if not task:
+        return _task_not_found(rule_id)
+    return JsonResponse({'status': 'success', 'task': _serialize_task(rule_id, task)}, status=200)
 
 
 
@@ -458,7 +593,7 @@ class QueueMaintainer:
         self.running=True
         self.que_dic[f'{pid}']={'uuid':f'{uuid}','queue':self.queue}
         #初始化时就调用异步线程读队列
-        self.consumer_thread = threading.Thread(target=self.consume_queue)
+        self.consumer_thread = threading.Thread(target=self.consume_queue, daemon=True)
         self.consumer_thread.start()
     def write(self,message):
         #with self.lock:#写队列时加锁
@@ -477,7 +612,7 @@ class QueueMaintainer:
                         self.queue.task_done()  # 确保消费完成
                 #self.queue.task_done()
             except Exception as e:
-                #self.queue.task_done()
+                print(f'QueueMaintainer consume_queue error: {e}', file=sys.__stderr__)
                 continue
 
         print(f'进程{self.pid}停止读取队列，已清空队列')
@@ -495,8 +630,11 @@ class QueueMaintainer:
         #sys.stdout = sys.__stdout__
         #print(f"[进程{process_id}] {message}")
         channels_layer=get_channel_layer()
+        if channels_layer is None:
+            return
         group_name = 'messages_group'
-        async_to_sync(channels_layer.group_send)(
+        sender = async_to_sync(channels_layer.group_send)
+        sender(
             group_name,  # 用户对应的 WebSocket 组
             {
                 'type': 'send_message',  # 消息类型

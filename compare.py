@@ -18,7 +18,7 @@ from queue import Queue
 from collections import defaultdict
 import multiprocessing
 from threading import Thread
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 config = configparser.RawConfigParser()
 config2 = configparser.RawConfigParser()
 config.read(r'resource/compare.ini', encoding='utf-8')
@@ -85,8 +85,50 @@ class ergodic_database():
         self.tgt_pri= {}
         self.src_pri= []
         self.ob_mode=None
+        self.control={}
         #multi
         #self.pool=multiprocessing.Pool()
+
+    def set_control(self, control=None):
+        self.control = control or {}
+
+    def _stop_event(self):
+        if isinstance(self.control, dict):
+            return self.control.get('stop_event')
+        return None
+
+    def _resume_event(self):
+        if isinstance(self.control, dict):
+            return self.control.get('resume_event')
+        return None
+
+    def _is_stop_requested(self):
+        stop_event = self._stop_event()
+        return bool(stop_event and stop_event.is_set())
+
+    def _wait_if_paused(self, label='compare任务'):
+        resume_event = self._resume_event()
+        stop_event = self._stop_event()
+        if not resume_event:
+            return False
+        notified = False
+        while not resume_event.is_set():
+            if stop_event and stop_event.is_set():
+                print(f'{label} 收到停止指令')
+                return True
+            if not notified:
+                print(f'{label} 已暂停，等待继续')
+                notified = True
+            stime.sleep(0.5)
+        if notified:
+            print(f'{label} 已继续')
+        return False
+
+    def _check_control(self, label='compare任务'):
+        if self._is_stop_requested():
+            print(f'{label} 收到停止指令')
+            return True
+        return self._wait_if_paused(label)
 
     @property
     def bfe(self):
@@ -2163,12 +2205,13 @@ class ergodic_database():
                 self.conf_tgt = 'ob_oracle';self.ob_mode='src_oralce';tgt = self.ora_tab(self.tgt_db)
             else:self.conf_tgt = 'ob_mysql';self.ob_mode='src_oralce';tgt = self.mysql_tab(self.tgt_db)
         elif self.tgt_db_t=='hbase':
-            self.conf_tgt = 'hbase';tgt=(self.hbase_tab(),src[1])#hbase特殊，备端表结构从源端获取
+            self.conf_tgt = 'hbase';tgt=(len(self.hbase_tab()),src[1])#hbase特殊，备端表结构从源端获取
         else:tgt=self.conf_tgt='oracle';self.ora_tab(self.tgt_db)#缺省备库oracle
         return src,tgt
-    def compare(self,src,tgt,err_handling,if_cpdata):
+    def compare(self,src,tgt,err_handling,if_cpdata,control=None):
         #源备库设置
         #src='sqlserver';tgt='postgre';err_handling=3;if_cpdata:0 是否内容比较(部分链路不支持)
+        self.set_control(control)
         self.src_db=src
         self.tgt_db=tgt
         self.src_db_t = config2.get(f'{self.src_db}', 'type')#根据输入的数据库具体名找config中对应的type值，可加try优化报错
@@ -2209,7 +2252,6 @@ class ergodic_database():
         else:
             print('源端共计 %d个表，备端共计 %d个表'%(src[0],tgt[0]))
             self.bfe_last.append('源端共计 %d个表，备端共计 %d个表'%(src[0],tgt[0]))
-        
         def pre_compare(src,tgt):
             for y in src[1]:
                 a,y=self.search_dicts(tgt[1],'tab_name',y['tab_name'].upper(),y)#源备表名列表可能乱序，按源端表名匹配
@@ -2224,17 +2266,33 @@ class ergodic_database():
 
         tasklist=pre_compare(src,tgt)
         with ThreadPoolExecutor(max_workers=concurrency) as cons_data_tp:
-            futures = [
-                cons_data_tp.submit(self.cons_data_compare, tab_name, a, tab_col, if_cpdata)
-                for tab_name, a, tab_col in tasklist
-            ]
-            for fut in futures:
-                result = fut.result()
-                self.bfe_last.append(result['messages'])
-                if result['col_result'] is not None:
-                    self.col_result.append(result['col_result'])
-                if result['cons_err'] is not None:
-                    self.cons_err.append(result['cons_err'])
+            futures = {}
+            next_index = 0
+            stop_requested = False
+            while next_index < len(tasklist) or futures:#滚动提交，每完成一个任务就提交一个新的，方便控制状态
+                if self._check_control('compare调度'):
+                    stop_requested = True
+                while not stop_requested and next_index < len(tasklist) and len(futures) < concurrency:
+                    tab_name, a, tab_col = tasklist[next_index]
+                    fut = cons_data_tp.submit(self.cons_data_compare, tab_name, a, tab_col, if_cpdata)
+                    futures[fut] = tab_name
+                    next_index += 1
+                if not futures:
+                    break
+                done, _ = wait(list(futures.keys()), timeout=0.5, return_when=FIRST_COMPLETED)
+                if not done:
+                    continue
+                for fut in done:
+                    futures.pop(fut, None)
+                    result = fut.result()
+                    self.bfe_last.append(result['messages'])
+                    if result['col_result'] is not None:
+                        self.col_result.append(result['col_result'])
+                    if result['cons_err'] is not None:
+                        self.cons_err.append(result['cons_err'])
+            if stop_requested:
+                #self.bfe_last.append('compare任务已收到停止指令，停止继续提交新表')
+                print('compare任务已收到停止指令，停止继续提交新表')
         # self.xlsx(self.bfe_last)
         #print(self.bfe_last)
         #打表
@@ -2253,11 +2311,23 @@ class ergodic_database():
             self._reset_compare_context(tab_name)
             table_col_result = None
             table_cons_err = None
+            if self._check_control(f'表 {tab_name}'):
+                return {
+                    'messages': list(self.bfe),
+                    'col_result': table_col_result,
+                    'cons_err': table_cons_err,
+                }
             print(f'表 {tab_name} 开始比对')
             if len(a) == len(tab_col) or (self.tgt_db_t=='hbase' and len(a)<len(tab_col)):
                 print('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
                 self.bfe.append('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
                 ora_search_column = self.col_compair(tab_col,a)#比对字段属性
+                if self._check_control(f'表 {tab_name}'):
+                    return {
+                        'messages': list(self.bfe),
+                        'col_result': table_col_result,
+                        'cons_err': table_cons_err,
+                    }
                 if self.tgt_db_t != 'hbase':
                     tgt_cons = self._run_cons_analysis(tab_name, len(a), 'tgt')
                     src_cons = self._run_cons_analysis(tab_name, len(a), 'src')
@@ -2266,6 +2336,12 @@ class ergodic_database():
                     src_cons = self._run_cons_analysis(tab_name, len(a), 'src')
                     order_col, table_col_result = self.cons_compare(src_cons, src_cons)
                 if if_cpdata==1:
+                    if self._check_control(f'表 {tab_name}'):
+                        return {
+                            'messages': list(self.bfe),
+                            'col_result': table_col_result,
+                            'cons_err': table_cons_err,
+                        }
                     table_cons_err = self._run_row_contain(tab_name,tab_col,a,order_col,ora_search_column)
             elif self.src_db_t=='hbase':
                 pass

@@ -1,5 +1,5 @@
 #子进程函数文件
-import configparser
+import configparser,time
 import io
 import os,time,random
 import sys
@@ -7,6 +7,7 @@ import opg
 import switch
 import ergodic
 import compare
+import compare_refactor as cr
 import openpyxl
 import sqlite3
 from django.http import HttpResponse
@@ -30,8 +31,18 @@ def rule(section,s):
     config.read(f'{settings.BASE_DIR}/resource/DB.ini',encoding='utf-8')
     if set['src']=='db2':type_c='db2'
     else:type_c=0
-    c = {'rule': set['rule_name'], 'type': config.get(f"{set['src']}",'type'), 'db':type_c,'conn':None ,'rule_id':set['rule_id'],
-         'if_unique':set['unique_number'],'usrid':set['user_id'],'tgt_type':dict(config[f"{set['tgt']}"])['type']}
+    c = {
+        'rule': set['rule_name'],
+        'src': set['src'],
+        'tgt': set['tgt'],
+        'type': config.get(f"{set['src']}",'type'),
+        'db':type_c,
+        'conn':None,
+        'rule_id':set['rule_id'],
+        'if_unique':set['unique_number'],
+        'usrid':set['user_id'],
+        'tgt_type':dict(config[f"{set['tgt']}"])['type']
+    }
     if s == 's':
         c['conn']=opg.MysqlConn(set['src'])
         conn = c['conn']
@@ -52,7 +63,11 @@ def get_rule():
     config.read(cfg_dir, encoding='utf-8')
     set = {section: dict(config.items(section)) for section in config.sections()}
     return set
-def incr_switch(args,stp_event):#调用swich执行sql用例
+def _stop_requested(control):
+    if isinstance(control, dict):
+        control = control.get('stop_event')
+    return bool(control and control.is_set())
+def incr_switch(args,control=None):#调用swich执行sql用例
     print(f'进程号{os.getpid()}执行开始,更改输出流至queuemaintainer')
     #old_stdout = sys.stdout#更改输出流
     #sys.stdout = apps.QueueMaintainer(args['rule_id'],os.getpid(),args['usrid'])
@@ -60,37 +75,46 @@ def incr_switch(args,stp_event):#调用swich执行sql用例
     print(f'进程号{os.getpid()}执行完毕，s总共耗时：\t\t毫秒')
     try:
         conn=args['conn']()
-        event=stp_event
+        event=control
         pre_crt = 1#     每个用例文件统一建表后再进行dml、ddl等操作      ，1开启此项，默认0-false
         #mssql, type = p.define(type)
         p = switch.read_case(int(args['if_unique']), args['type'],args['db'] ,switch.db2_case)
         T1 = time.perf_counter()
         for casefile in p.ergodic(args['type']):
+            if _stop_requested(control):
+                print('收到停止指令，停止继续执行后续case文件')
+                break
             p.analysis(casefile,pre_crt)
             p.execute(conn,event)
+            if _stop_requested(control):
+                print('收到停止指令，当前流程已结束')
+                break
         T2 = time.perf_counter()
         print(f'进程号{os.getpid()}执行完毕，s总共耗时：\t\t%f毫秒' % ((T2 - T1) * 1000))
     except Exception as e:
         print(f'子进程异常_{e}')
     #sys.stdout = old_stdout
     print('恢复输出流\nsubprocess done')
-def start_comp(args):
+def start_comp(args, control=None):
     print(f'进程号{os.getpid()}执行开始,更改输出流至queuemaintainer')
-    old_stdout = sys.stdout  # 更改输出流
-    sys.stdout = apps.QueueMaintainer(args['rule_id'], os.getpid(), args['usrid'])
+    #old_stdout = sys.stdout  # 更改输出流
+    #sys.stdout = apps.QueueMaintainer(args['rule_id'], os.getpid(), args['usrid'])
     print(f'进程号{os.getpid()},更改输出流完毕')
     print(f'进程号{os.getpid()}执行完毕，s总共耗时：\t\t毫秒')
-    p=compare.ergodic_database()
+    #p=compare.ergodic_database()
+    p=cr.ergodic_database()#djgano选用工厂提供连接
     dump_excel = ergodic.get_casefile()
     # err_handling
     # 1：自动忽略所有无主键，2：忽略所有出错表，3：忽略所有问题表，4：手动选择
     # if_cpdata 1:比较内容，0 不比较内容
     err_handling, if_cpdata=3,1
-    print(args['type'], args['tgt_type'])
-    p.compare(args['type'], args['tgt_type'], err_handling, if_cpdata)
+    print(args['src'], args['tgt'])
+    start_time=time.monotonic()
+    p.compare(args['src'], args['tgt'], err_handling, if_cpdata, control=control)
+    print('总耗时%.2f毫秒' % ((time.monotonic() - start_time) * 1000))
     p.dump_e(dump_excel)
     print('恢复输出流\nsubprocess done\n记录report和规则关系到表')
-    sys.stdout = old_stdout
+    #sys.stdout = old_stdout
     wb = openpyxl.load_workbook('resource/test_report/report.xlsx', data_only=True)
     last_sheet = wb.worksheets[-1].title
     conn = sqlite3.connect('identifier.sqlite')
