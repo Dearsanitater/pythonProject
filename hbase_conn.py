@@ -13,9 +13,6 @@ config = configparser.ConfigParser(interpolation=None)
 config.read(r'resource/config.ini', encoding='utf-8')
 db_config = configparser.ConfigParser(interpolation=None)
 db_config.read(r'resource/DB.ini', encoding='utf-8')
-#dbname='hyperbase184'
-
-#dbname='hyperbase184'
 
 def ker_jvm(jars):
     jars.append('lib/hyperlib')
