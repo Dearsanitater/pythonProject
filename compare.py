@@ -1620,7 +1620,6 @@ class ergodic_database():
                     t = t.sort_values(by=tgt_sortable_cols, ascending=True)
                     s = s.sort_values(by=src_sortable_cols,ascending=True)
             elif  self.conf_tgt=='hbase':
-
                 pass
             #逐行逐列比较
             # for i in range(s.shape[0]):
@@ -1863,7 +1862,7 @@ class ergodic_database():
             #     row=[]
             #err=standard.std_row(s,t)['errors']
             #hash比较
-            err=standard.hash_compare(s,t)['errors']
+            err=standard.hash_compare(s,t,[colType['type'] for colType in tbcol],tbname)['errors']
         elif len(s)!=0 and len(t)!=0 and s.shape[0]!=t.shape[0] and s.shape[1]==t.shape[1]:
             print('NO! 行数不同,源%d行,备%d行'%(s.shape[0],t.shape[0]));self.bfe.append('NO! 行数不同,源%d行,备%d行'%(len(s[0]),len(t[0])))
         elif len(s)!=0 and len(t)!=0 and len(s[0])==len(t[0]) and s.shape[1]!=t.shape[1]:
@@ -1887,8 +1886,8 @@ class ergodic_database():
             elif col['type'].startswith('varchar'):
                 self.type_cache[col['type']]='''CONVERT(nvarchar(max),"{col_name}")'''
                 f.append(f"{self.type_cache[col['type']]}".format(col_name=col['col_name']));i+=1
-            elif col['type'].startswith('char'):
-                    self.type_cache[col['type']] ='''CONVERT(nchar,"{col_name}")'''
+            elif col['type'].startswith('char') or col['type'].startswith('float'):#处理科学计数
+                    self.type_cache[col['type']] ='''CONVERT(nvarchar,"{col_name}")'''
                     f.append(f"{self.type_cache[col['type']]}".format(col_name=col['col_name']));i+=1
             elif col['type'].startswith('text'):
                     self.type_cache[col['type']] ='''CONVERT(ntext,"{col_name}")'''
