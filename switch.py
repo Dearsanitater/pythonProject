@@ -39,7 +39,7 @@ root_directory = r'D:\Info\case_resource'  # 用例包#############
 db2_case = r'D:\Info\case_resource\db2\db2-sql'  # 表修复数据类型路径
 
 dds_mapping = json.loads(config.get('400_type', 'type'))
-ignore_casefile=['DDL','NOPK']#忽略带关键字的case文件
+ignore_casefile=['DDL','NOPK']#忽略带关键字的case文件，常见关键字 DML/DDL/PK/NOPK/OBJ/
 
 class db2_conn():
     def __init__(self, conn):

@@ -1886,14 +1886,17 @@ class ergodic_database():
             elif col['type'].startswith('varchar'):
                 self.type_cache[col['type']]='''CONVERT(nvarchar(max),"{col_name}")'''
                 f.append(f"{self.type_cache[col['type']]}".format(col_name=col['col_name']));i+=1
-            elif col['type'].startswith('char') or col['type'].startswith('float'):#处理科学计数
-                    self.type_cache[col['type']] ='''CONVERT(nvarchar,"{col_name}")'''
+            elif col['type'].startswith('char') or col['type'].startswith('float') or col['type'].startswith('real'):#处理科学计数
+                    self.type_cache[col['type']] ='''CONVERT(nvarchar(max),"{col_name}")'''
                     f.append(f"{self.type_cache[col['type']]}".format(col_name=col['col_name']));i+=1
             elif col['type'].startswith('text'):
                     self.type_cache[col['type']] ='''CONVERT(ntext,"{col_name}")'''
                     f.append(f"{self.type_cache[col['type']]}".format(col_name=col['col_name']));i+=1
             elif col['type'].startswith('geo'):
                     self.type_cache[col['type']]='"{col_name}".STAsText()'
+                    f.append(f"{self.type_cache[col['type']]}".format(col_name=col['col_name']));i+=1
+            elif col['type'].startswith('bigint'):
+                    self.type_cache[col['type']]='convert(decimal(38,0),{col_name})'
                     f.append(f"{self.type_cache[col['type']]}".format(col_name=col['col_name']));i+=1
             elif col['type'].startswith('sql_variant') or col['type'].startswith('hierarchyid'):
                 if 'binary' in col['col_name']:

@@ -3,6 +3,7 @@ import decimal
 import hashlib
 import re
 import struct
+import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 import cx_Oracle
@@ -16,10 +17,14 @@ SPACE_RE = re.compile(r"\s+")
 CELL_CLEAN_RE = re.compile(r"[\[\]\(\)\{\}\u3010\u3011\uFF08\uFF09,\uFF0C\uFFE5$\'\"\u201c\u201d\u2018\u2019 ]")
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 DATETIME_HINT_RE = re.compile(r"[-/:T]")
+HEX_RE = re.compile(r"^[0-9A-F]+$")
+SQL_VARIANT_DATETIME_RE = re.compile(r"(?i)([-/:T]|(?:^|\s)(AM|PM)$|^\d{1,2}\s+\d{1,2}\s+\d{4}$)")
+VALUE_TOKEN_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?")
+GEOM_SCALE = Decimal("0.000000000001")
 data_dict = {
     "char": "string",
     "nchar": "string",
-    "varchar": "string",    "nvarchar": "string",    "sql_variant": "string",    "sysname": "string",    "UNIQUEIDENTIFIER": "string",    "text": "string",    "ntext": "string",    "image": "binary",    "xml": "string",    "tinyint": "number",    "smallint": "number",    "bigint": "number",    "int": "number",    "numeric": "number",    "decimal": "number",    "float": "number",    "real": "number",    "money": "number",    "smallmoney": "number",    "date": "datetime",
+    "varchar": "string",    "nvarchar": "string",    "sql_variant": "string",    "sysname": "string",    "UNIQUEIDENTIFIER": "string",    "text": "string",    "ntext": "string",    "image": "binary",    "xml": "xml",    "tinyint": "number",    "smallint": "number",    "bigint": "number",    "int": "number",    "numeric": "number",    "decimal": "number",    "float": "number",    "real": "number",    "money": "number",    "smallmoney": "number",    "date": "datetime",
     "time": "datetime",
     "datetime": "datetime",    "datetime2": "datetime",    "smalldatetime": "datetime",    "datetimeoffset": "datetime",    "binary": "binary",    "varbinary": "binary",    "hierarchyid": "binary",  # 假设 hierarchyid 归类为 binary（原字典归类不合理，可调整）
     "geometry": "spatial",
@@ -28,10 +33,183 @@ data_dict = {
 }
 
 
+def _normalize_col_type(col_type):
+    text = str(col_type or "other").strip().lower()
+    return re.sub(r"\(.*?\)", "", text).strip()
+
+
+def _std_datetime(value):
+    dt_value = None
+    if isinstance(value, pandas.Timestamp):
+        dt_value = value.to_pydatetime()
+    elif isinstance(value, datetime):
+        dt_value = value
+    elif isinstance(value, date) and not isinstance(value, datetime):
+        dt_value = datetime.combine(value, time.min)
+    elif isinstance(value, time):
+        dt_value = datetime.combine(date(1900, 1, 1), value)
+    elif isinstance(value, str):
+        raw = value.strip()
+        if raw == "":
+            return ""
+        try:
+            if ":" in raw and not DATETIME_HINT_RE.search(raw.replace(":", "", 1)):
+                dt_value = datetime.combine(date(1900, 1, 1), parser.parse(raw).time())
+            elif ":" in raw and "-" not in raw and "/" not in raw and "T" not in raw:
+                dt_value = datetime.combine(date(1900, 1, 1), parser.parse(raw).time())
+            elif ":" not in raw and ("-" in raw or "/" in raw):
+                dt_value = datetime.combine(parser.parse(raw).date(), time.min)
+            else:
+                dt_value = parser.parse(raw)
+        except Exception:
+            return value
+    if dt_value is None:
+        return str(value)
+    dt_value = dt_value.replace(tzinfo=None)
+    return dt_value.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _std_float(value):
+    try:
+        if isinstance(value, str):
+            compact = SPACE_RE.sub("", value)
+            if compact == "":
+                return ""
+            decimal_value = Decimal(compact)
+        else:
+            decimal_value = Decimal(str(value))
+        if decimal_value == 0:
+            return "0"
+        if decimal_value.adjusted() < -6:
+            return "0"
+        exponent = decimal_value.adjusted() - 5
+        quantized = decimal_value.quantize(Decimal(f"1e{exponent}"), rounding=decimal.ROUND_HALF_UP)
+    except Exception:
+        return str(value).strip() if isinstance(value, str) else str(value)
+    if quantized == 0:
+        return "0"
+    text = format(quantized.normalize(), ".6g").lower()
+    if "e" in text:
+        mantissa, exponent = text.split("e", 1)
+        exponent = exponent.replace("+", "")
+        exponent = exponent.lstrip("0") or "0"
+        if exponent.startswith("-"):
+            exponent = "-" + (exponent[1:].lstrip("0") or "0")
+        text = f"{mantissa}e{exponent}"
+    text = text.rstrip("0").rstrip(".") if "e" not in text else text
+    return text or "0"
+
+
+def _std_binary(value):
+    if isinstance(value, str):
+        raw = value.strip().upper()
+        if raw.startswith("0X"):
+            raw = raw[2:]
+        compact = SPACE_RE.sub("", raw)
+        return compact if HEX_RE.match(compact) else raw
+    if isinstance(value, bytes):
+        return value.hex().upper()
+    return str(value)
+
+
+def _normalize_spatial_number(token):
+    try:
+        decimal_value = Decimal(token)
+        quantized = decimal_value.quantize(GEOM_SCALE, rounding=decimal.ROUND_HALF_UP)
+        text = format(quantized.normalize(), "f")
+        return text.rstrip("0").rstrip(".") if "." in text else text
+    except Exception:
+        return token
+
+
+def _normalize_glued_point(raw):
+    match = re.match(r"^\s*POINT\s*\(?\s*(.*?)\s*\)?\s*$", raw, re.IGNORECASE)
+    if not match:
+        return None
+    payload = match.group(1)
+    if " " in payload or "," in payload:
+        return None
+    dot_positions = [idx for idx, char in enumerate(payload) if char == "."]
+    if len(dot_positions) >= 2:
+        second_dot = dot_positions[1]
+        for lat_int_len in (2, 1):
+            split_idx = second_dot - lat_int_len
+            if split_idx <= 0:
+                continue
+            left = payload[:split_idx]
+            right = payload[split_idx:]
+            if not NUMERIC_RE.match(left) or not NUMERIC_RE.match(right):
+                continue
+            try:
+                lon = Decimal(left)
+                lat = Decimal(right)
+            except Exception:
+                continue
+            if abs(lon) <= 180 and abs(lat) <= 90:
+                return f"POINT({_normalize_spatial_number(left)} {_normalize_spatial_number(right)})"
+
+    candidates = []
+    for idx in range(1, len(payload)):
+        left = payload[:idx]
+        right = payload[idx:]
+        if "." not in left or "." not in right:
+            continue
+        if not NUMERIC_RE.match(left) or not NUMERIC_RE.match(right):
+            continue
+        try:
+            lon = Decimal(left)
+            lat = Decimal(right)
+        except Exception:
+            continue
+        if abs(lon) <= 180 and abs(lat) <= 90:
+            candidates.append((idx, left, right))
+    if not candidates:
+        return None
+    _, left, right = max(candidates, key=lambda item: item[0])
+    return f"POINT({_normalize_spatial_number(left)} {_normalize_spatial_number(right)})"
+
+
+def _std_spatial(value):
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex().upper()
+    raw = str(value).strip()
+    if raw == "":
+        return ""
+    glued_point = _normalize_glued_point(raw)
+    if glued_point:
+        return SPACE_RE.sub("", glued_point.upper())
+
+    def replace_token(match):
+        return _normalize_spatial_number(match.group(0))
+
+    normalized = VALUE_TOKEN_RE.sub(replace_token, raw).upper()
+    return SPACE_RE.sub("", normalized)
+
+
+def _std_xml(value):
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex().upper()
+    if not isinstance(value, str):
+        value = str(value)
+    raw = value.strip()
+    if raw == "":
+        return ""
+    try:
+        root = ET.fromstring(raw)
+        return ET.tostring(root, encoding="unicode")
+    except Exception:
+        return raw
+
+
 def std_cell(value, col_type="other"):
-    col_type = str(col_type or "other").strip().lower()
-    col_type = re.sub(r"\(.*?\)", "", col_type).strip()
-    kind = data_dict.get(col_type, col_type if col_type in ("string", "number", "datetime", "binary", "spatial", "other") else "other")
+    col_type = _normalize_col_type(col_type)
+    kind = data_dict.get(col_type, col_type if col_type in ("string", "number", "datetime", "binary", "spatial", "xml", "other") else "other")
     if isinstance(value, cx_Oracle.LOB):
         value = value.read()
     if isinstance(value, memoryview):
@@ -42,44 +220,37 @@ def std_cell(value, col_type="other"):
         return "[" + ",".join(std_cell(item, col_type) for item in value) + "]"
     if isinstance(value, dict):
         return "{" + ",".join(f"{std_cell(k, col_type)}:{std_cell(v, col_type)}" for k, v in sorted(value.items(), key=lambda item: str(item[0]))) + "}"
+    if value is None or value == "" or value is pandas.NaT:
+        return ""
+    if isinstance(value, float) and numpy.isnan(value):
+        return ""
+    if kind == "xml":
+        return _std_xml(value)
+    if col_type in ("float", "real"):
+        return _std_float(value)
+    if col_type == "sql_variant" and isinstance(value, str):
+        raw = value.strip()
+        if raw == "":
+            return ""
+        if SQL_VARIANT_DATETIME_RE.search(raw):
+            try:
+                parsed = parser.parse(raw).replace(tzinfo=None)
+                return parsed.strftime("%Y-%m-%d %H:%M:%S.%f")
+            except Exception:
+                parsed = _std_datetime(raw)
+                if parsed != raw:
+                    return parsed
+    if kind == "datetime":
+        return _std_datetime(value)
+    if kind == "binary":
+        return _std_binary(value)
+    if kind == "spatial":
+        return _std_spatial(value)
     if isinstance(value, bytes):
         try:
             value = value.decode("utf-8")
         except UnicodeDecodeError:
             return value.hex().upper()
-    if value is None or value == "" or value is pandas.NaT:
-        return ""
-    if isinstance(value, float) and numpy.isnan(value):
-        return ""
-    if kind == "datetime":
-        dt_value = None
-        if isinstance(value, pandas.Timestamp):
-            dt_value = value.to_pydatetime()
-        elif isinstance(value, datetime):
-            dt_value = value
-        elif isinstance(value, date) and not isinstance(value, datetime):
-            dt_value = datetime.combine(value, time.min)
-        elif isinstance(value, time):
-            dt_value = datetime.combine(date(1900, 1, 1), value)
-        elif isinstance(value, str):
-            raw = value.strip()
-            if raw == "":
-                return ""
-            try:
-                if ":" in raw and not DATETIME_HINT_RE.search(raw.replace(":", "", 1)):
-                    dt_value = datetime.combine(date(1900, 1, 1), parser.parse(raw).time())
-                elif ":" in raw and "-" not in raw and "/" not in raw and "T" not in raw:
-                    dt_value = datetime.combine(date(1900, 1, 1), parser.parse(raw).time())
-                elif ":" not in raw and ("-" in raw or "/" in raw):
-                    dt_value = datetime.combine(parser.parse(raw).date(), time.min)
-                else:
-                    dt_value = parser.parse(raw)
-            except Exception:
-                return raw
-        if dt_value is None:
-            return str(value)
-        dt_value = dt_value.replace(tzinfo=None)
-        return dt_value.strftime("%Y-%m-%d %H:%M:%S.%f")
     if isinstance(value, (pandas.Timestamp, datetime)):
         dt_value = value.to_pydatetime() if isinstance(value, pandas.Timestamp) else value
         dt_value = dt_value.replace(tzinfo=None)
@@ -128,9 +299,14 @@ def hash_compare(s, t,col_type_list :list,tbname):
     tgt_hashes = []
     src_hash_pool = Counter()
     src_row_map = {}
+    active_indexes = []
+    for j in range(min(s.shape[1], t.shape[1])):
+        col_type = _normalize_col_type(col_type_list[j] if j < len(col_type_list) else "other")
+        if col_type != "timestamp":
+            active_indexes.append(j)
 
     for i in range(s.shape[0]):
-        src_row = [std_cell(s.iloc[i, j], col_type_list[j] if j < len(col_type_list) else "other") for j in range(s.shape[1])]
+        src_row = [std_cell(s.iloc[i, j], col_type_list[j] if j < len(col_type_list) else "other") for j in active_indexes]
         src_hasher = hashlib.blake2b(digest_size=16)
         for cell in src_row:
             cell_bytes = cell.encode("utf-8", errors="replace")
@@ -143,7 +319,7 @@ def hash_compare(s, t,col_type_list :list,tbname):
             src_row_map[src_hash] = src_row
 
     for i in range(t.shape[0]):
-        tgt_row = [std_cell(t.iloc[i, j], col_type_list[j] if j < len(col_type_list) else "other") for j in range(t.shape[1])]
+        tgt_row = [std_cell(t.iloc[i, j], col_type_list[j] if j < len(col_type_list) else "other") for j in active_indexes]
         tgt_hasher = hashlib.blake2b(digest_size=16)
         for cell in tgt_row:
             cell_bytes = cell.encode("utf-8", errors="replace")
