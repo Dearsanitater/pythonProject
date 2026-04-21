@@ -39,7 +39,7 @@ root_directory = r'D:\Info\case_resource'  # 用例包#############
 db2_case = r'D:\Info\case_resource\db2\db2-sql'  # 表修复数据类型路径
 
 dds_mapping = json.loads(config.get('400_type', 'type'))
-ignore_casefile=['DDL','NOPK']#忽略带关键字的case文件，常见关键字 DML/DDL/PK/NOPK/OBJ/
+ignore_casefile=['DDL']#忽略带关键字的case文件，常见关键字 DML/DDL/PK/NOPK/OBJ/
 
 class db2_conn():
     def __init__(self, conn):
@@ -611,7 +611,7 @@ class read_case():
 # 建表延迟
 crt_delay = 1
 # dml/ddl延迟
-dml_delay = 1.5
+dml_delay = 0.5
 # 是否overflow，0、不处理行内容，1、缩短行款
 overflow = 1
 # 手动调试

@@ -123,31 +123,25 @@ def _std_sql_variant_temporal(raw):
     if SQL_VARIANT_DATETIMEOFFSET_RE.search(raw) or (
         len(raw) > VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["length"] and ("+" in raw[10:] or "-" in raw[10:] or raw.upper().endswith("Z"))
     ):
-        if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetimeoffset"]["microsecond"]["regex"], raw):
-            return parsed.isoformat(" ", timespec="microseconds")
-        if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetimeoffset"]["second"]["regex"], raw):
-            return parsed.isoformat(" ", timespec="seconds")
-        if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetimeoffset"]["minute"]["regex"], raw):
-            return parsed.isoformat(" ", timespec="minutes")
-        return parsed.isoformat(" ", timespec="microseconds")
+        return parsed.isoformat(" ", timespec="minutes")
 
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["date"]["day"]["regex"], raw):
-        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["date"]["day"]["format"])
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["format"])
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["minute"]["regex"], raw):
         return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["minute"]["format"])
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["second"]["regex"], raw):
-        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["second"]["format"])
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["minute"]["format"])
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["microsecond"]["regex"], raw):
-        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["microsecond"]["format"])
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["minute"]["format"])
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["day"]["regex"], raw):
         return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["day"]["format"])
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["regex"], raw):
         return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["format"])
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["second"]["regex"], raw):
-        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["second"]["format"])
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["format"])
     if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["regex"], raw):
-        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["format"])
-    return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["format"])
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["format"])
+    return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["format"])
 
 
 def _sql_variant_fast_equal(src_raw, src_norm, tgt_raw, tgt_norm):
