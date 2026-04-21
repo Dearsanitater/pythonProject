@@ -1,4 +1,3 @@
-import copy
 import decimal
 import hashlib
 import re
@@ -19,7 +18,9 @@ NUMERIC_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 DATETIME_HINT_RE = re.compile(r"[-/:T]")
 HEX_RE = re.compile(r"^[0-9A-F]+$")
 SQL_VARIANT_DATETIME_RE = re.compile(r"(?i)([-/:T]|(?:^|\s)(AM|PM)$|^\d{1,2}\s+\d{1,2}\s+\d{4}$)")
+SQL_VARIANT_DATETIMEOFFSET_RE = re.compile(r"(?i)(?: ?[+-]\d{2}:\d{2}|Z)$")
 VALUE_TOKEN_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?")
+SPATIAL_TOKEN_RE = re.compile(r"[A-Z_]+|[(),]|\s+|[^A-Z_(),\s]+", re.IGNORECASE)
 GEOM_SCALE = Decimal("0.000000000001")
 data_dict = {
     "char": "string",
@@ -28,14 +29,164 @@ data_dict = {
     "time": "datetime",
     "datetime": "datetime",    "datetime2": "datetime",    "smalldatetime": "datetime",    "datetimeoffset": "datetime",    "binary": "binary",    "varbinary": "binary",    "hierarchyid": "binary",  # 假设 hierarchyid 归类为 binary（原字典归类不合理，可调整）
     "geometry": "spatial",
+    "geography": "spatial",
     "geomephy": "spatial",
     "timestamp": "other"  # 原字典中 timestamp 归类为 other
+}
+VARIANT_TEMPORAL_KIND = {
+    "date": "date",
+    "time": "time",
+    "datetime": "datetime",
+    "datetimeoffset": "datetimeoffset",
+}
+
+VARIANT_TEMPORAL_FORMATS = {
+    "date": {
+        "day": {
+            "length": 10,
+            "format": "%Y-%m-%d",
+            "regex": r"^\d{4}-\d{2}-\d{2}$",
+        },
+    },
+    "time": {
+        "minute": {
+            "length": 5,
+            "format": "%H:%M",
+            "regex": r"^\d{2}:\d{2}$",
+        },
+        "second": {
+            "length": 8,
+            "format": "%H:%M:%S",
+            "regex": r"^\d{2}:\d{2}:\d{2}$",
+        },
+        "microsecond": {
+            "length": 15,
+            "format": "%H:%M:%S.%f",
+            "regex": r"^\d{2}:\d{2}:\d{2}\.\d{1,6}$",
+        },
+    },
+    "datetime": {
+        "day": {
+            "length": 10,
+            "format": "%Y-%m-%d",
+            "regex": r"^\d{4}-\d{2}-\d{2}$",
+        },
+        "minute": {
+            "length": 16,
+            "format": "%Y-%m-%d %H:%M",
+            "regex": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$",
+        },
+        "second": {
+            "length": 19,
+            "format": "%Y-%m-%d %H:%M:%S",
+            "regex": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
+        },
+        "microsecond": {
+            "length": 26,
+            "format": "%Y-%m-%d %H:%M:%S.%f",
+            "regex": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}$",
+        },
+    },
+    "datetimeoffset": {
+        "minute": {
+            "length": 22,
+            "format": "%Y-%m-%d %H:%M%z",
+            "regex": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: ?[+-]\d{2}:\d{2}|Z)$",
+        },
+        "second": {
+            "length": 25,
+            "format": "%Y-%m-%d %H:%M:%S%z",
+            "regex": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?: ?[+-]\d{2}:\d{2}|Z)$",
+        },
+        "microsecond": {
+            "length": 32,
+            "format": "%Y-%m-%d %H:%M:%S.%f%z",
+            "regex": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}(?: ?[+-]\d{2}:\d{2}|Z)$",
+        },
+    },
 }
 
 
 def _normalize_col_type(col_type):
     text = str(col_type or "other").strip().lower()
     return re.sub(r"\(.*?\)", "", text).strip()
+
+
+def _std_sql_variant_temporal(raw):
+    if not SQL_VARIANT_DATETIME_RE.search(raw):
+        return None
+    try:
+        parsed = parser.parse(raw)
+    except Exception:
+        return None
+
+    if SQL_VARIANT_DATETIMEOFFSET_RE.search(raw) or (
+        len(raw) > VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["length"] and ("+" in raw[10:] or "-" in raw[10:] or raw.upper().endswith("Z"))
+    ):
+        if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetimeoffset"]["microsecond"]["regex"], raw):
+            return parsed.isoformat(" ", timespec="microseconds")
+        if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetimeoffset"]["second"]["regex"], raw):
+            return parsed.isoformat(" ", timespec="seconds")
+        if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetimeoffset"]["minute"]["regex"], raw):
+            return parsed.isoformat(" ", timespec="minutes")
+        return parsed.isoformat(" ", timespec="microseconds")
+
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["date"]["day"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["date"]["day"]["format"])
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["minute"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["minute"]["format"])
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["second"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["second"]["format"])
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["microsecond"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["time"]["microsecond"]["format"])
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["day"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["day"]["format"])
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["format"])
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["second"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["second"]["format"])
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["regex"], raw):
+        return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["format"])
+    return parsed.strftime(VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["format"])
+
+
+def _sql_variant_fast_equal(src_raw, src_norm, tgt_raw, tgt_norm):
+    if src_norm == tgt_norm:
+        return True
+    if not isinstance(src_norm, str) or not isinstance(tgt_norm, str):
+        return False
+    src_text = src_norm.strip()
+    tgt_text = tgt_norm.strip()
+    if src_text == "" or tgt_text == "":
+        return src_text == tgt_text
+    if SQL_VARIANT_DATETIMEOFFSET_RE.search(src_text):
+        return tgt_text.startswith(src_text)
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["date"]["day"]["regex"], src_text):
+        return tgt_text[:10] == src_text
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["minute"]["regex"], src_text) or re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["second"]["regex"], src_text) or re.fullmatch(VARIANT_TEMPORAL_FORMATS["time"]["microsecond"]["regex"], src_text):
+        target_time = tgt_text
+        if " " in tgt_text:
+            target_time = tgt_text.split(" ", 1)[1]
+        if SQL_VARIANT_DATETIMEOFFSET_RE.search(target_time):
+            target_time = re.sub(r"(?: ?[+-]\d{2}:\d{2}|Z)$", "", target_time, flags=re.IGNORECASE)
+        return target_time.startswith(src_text)
+    if re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["day"]["regex"], src_text) or re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["minute"]["regex"], src_text) or re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["second"]["regex"], src_text) or re.fullmatch(VARIANT_TEMPORAL_FORMATS["datetime"]["microsecond"]["regex"], src_text):
+        return tgt_text.startswith(src_text)
+    return False
+
+
+def _rows_fast_equal(src_raw_row, src_norm_row, tgt_raw_row, tgt_norm_row, col_type_list, active_indexes):
+    for pos, j in enumerate(active_indexes):
+        src_norm = src_norm_row[pos]
+        tgt_norm = tgt_norm_row[pos]
+        if src_norm == tgt_norm:
+            continue
+        col_type = _normalize_col_type(col_type_list[j] if j < len(col_type_list) else "other")
+        if col_type == "sql_variant":
+            if _sql_variant_fast_equal(src_raw_row[j], src_norm, tgt_raw_row[j], tgt_norm):
+                continue
+        return False
+    return True
 
 
 def _std_datetime(value):
@@ -67,8 +218,6 @@ def _std_datetime(value):
         return str(value)
     dt_value = dt_value.replace(tzinfo=None)
     return dt_value.strftime("%Y-%m-%d %H:%M:%S.%f")
-
-
 def _std_float(value):
     try:
         if isinstance(value, str):
@@ -98,8 +247,6 @@ def _std_float(value):
         text = f"{mantissa}e{exponent}"
     text = text.rstrip("0").rstrip(".") if "e" not in text else text
     return text or "0"
-
-
 def _std_binary(value):
     if isinstance(value, str):
         raw = value.strip().upper()
@@ -110,8 +257,6 @@ def _std_binary(value):
     if isinstance(value, bytes):
         return value.hex().upper()
     return str(value)
-
-
 def _normalize_spatial_number(token):
     try:
         decimal_value = Decimal(token)
@@ -122,51 +267,80 @@ def _normalize_spatial_number(token):
         return token
 
 
-def _normalize_glued_point(raw):
-    match = re.match(r"^\s*POINT\s*\(?\s*(.*?)\s*\)?\s*$", raw, re.IGNORECASE)
-    if not match:
-        return None
-    payload = match.group(1)
-    if " " in payload or "," in payload:
-        return None
-    dot_positions = [idx for idx, char in enumerate(payload) if char == "."]
-    if len(dot_positions) >= 2:
-        second_dot = dot_positions[1]
-        for lat_int_len in (2, 1):
-            split_idx = second_dot - lat_int_len
-            if split_idx <= 0:
-                continue
-            left = payload[:split_idx]
-            right = payload[split_idx:]
-            if not NUMERIC_RE.match(left) or not NUMERIC_RE.match(right):
-                continue
-            try:
-                lon = Decimal(left)
-                lat = Decimal(right)
-            except Exception:
-                continue
-            if abs(lon) <= 180 and abs(lat) <= 90:
-                return f"POINT({_normalize_spatial_number(left)} {_normalize_spatial_number(right)})"
-
+def _spatial_number_candidates(text, limit):
     candidates = []
-    for idx in range(1, len(payload)):
-        left = payload[:idx]
-        right = payload[idx:]
-        if "." not in left or "." not in right:
+    start = 1 if text.startswith(("+", "-")) else 0
+    for end in range(start + 1, len(text) + 1):
+        token = text[:end]
+        if token.endswith((".", "+", "-")):
             continue
-        if not NUMERIC_RE.match(left) or not NUMERIC_RE.match(right):
+        if token.startswith(".") or token.startswith("-.") or token.startswith("+."):
+            continue
+        if not NUMERIC_RE.match(token):
             continue
         try:
-            lon = Decimal(left)
-            lat = Decimal(right)
+            value = Decimal(token)
         except Exception:
             continue
-        if abs(lon) <= 180 and abs(lat) <= 90:
-            candidates.append((idx, left, right))
-    if not candidates:
+        if abs(value) <= limit:
+            candidates.append((end, token))
+    return candidates
+
+
+def _split_spatial_stream(text):
+    stream = text.strip()
+    if stream == "" or not re.fullmatch(r"[-+0-9.eE]+", stream):
         return None
-    _, left, right = max(candidates, key=lambda item: item[0])
-    return f"POINT({_normalize_spatial_number(left)} {_normalize_spatial_number(right)})"
+    cache = {}
+
+    def walk(pos, axis):
+        key = (pos, axis)
+        if key in cache:
+            return cache[key]
+        if pos == len(stream):
+            return []
+        limit = Decimal("180") if axis % 2 == 0 else Decimal("90")
+        best = None
+        for end, token in _spatial_number_candidates(stream[pos:], limit):
+            tail = walk(pos + end, axis + 1)
+            if tail is None:
+                continue
+            candidate = [_normalize_spatial_number(token)] + tail
+            if best is None or len(candidate) < len(best):
+                best = candidate
+        cache[key] = best
+        return best
+
+    parsed = walk(0, 0)
+    if not parsed or len(parsed) % 2 != 0:
+        return None
+    return parsed
+
+
+def _normalize_spatial_segment(segment):
+    parsed = _split_spatial_stream(segment)
+    if parsed:
+        return " ".join(parsed)
+    parts = []
+    last = 0
+    for match in VALUE_TOKEN_RE.finditer(segment):
+        parts.append(segment[last:match.start()])
+        parts.append(_normalize_spatial_number(match.group(0)))
+        last = match.end()
+    parts.append(segment[last:])
+    return "".join(parts)
+
+
+def _normalize_spatial_payload(payload):
+    parts = []
+    for token in SPATIAL_TOKEN_RE.findall(payload):
+        if token.isspace() or token in "(),":
+            parts.append(token)
+        elif re.fullmatch(r"[A-Z_]+", token, re.IGNORECASE):
+            parts.append(token.upper())
+        else:
+            parts.append(_normalize_spatial_segment(token))
+    return "".join(parts)
 
 
 def _std_spatial(value):
@@ -178,17 +352,18 @@ def _std_spatial(value):
     raw = str(value).strip()
     if raw == "":
         return ""
-    glued_point = _normalize_glued_point(raw)
-    if glued_point:
-        return SPACE_RE.sub("", glued_point.upper())
+    match = re.match(r"^\s*([A-Z_]+)\s*(.*)$", raw, re.IGNORECASE)
+    if match:
+        keyword = match.group(1).upper()
+        payload = match.group(2)
+        normalized = keyword + _normalize_spatial_payload(payload)
+        return SPACE_RE.sub("", normalized.upper())
 
     def replace_token(match):
         return _normalize_spatial_number(match.group(0))
 
     normalized = VALUE_TOKEN_RE.sub(replace_token, raw).upper()
     return SPACE_RE.sub("", normalized)
-
-
 def _std_xml(value):
     if isinstance(value, bytes):
         try:
@@ -205,8 +380,6 @@ def _std_xml(value):
         return ET.tostring(root, encoding="unicode")
     except Exception:
         return raw
-
-
 def std_cell(value, col_type="other"):
     col_type = _normalize_col_type(col_type)
     kind = data_dict.get(col_type, col_type if col_type in ("string", "number", "datetime", "binary", "spatial", "xml", "other") else "other")
@@ -232,14 +405,9 @@ def std_cell(value, col_type="other"):
         raw = value.strip()
         if raw == "":
             return ""
-        if SQL_VARIANT_DATETIME_RE.search(raw):
-            try:
-                parsed = parser.parse(raw).replace(tzinfo=None)
-                return parsed.strftime("%Y-%m-%d %H:%M:%S.%f")
-            except Exception:
-                parsed = _std_datetime(raw)
-                if parsed != raw:
-                    return parsed
+        parsed = _std_sql_variant_temporal(raw)
+        if parsed is not None:
+            return parsed
     if kind == "datetime":
         return _std_datetime(value)
     if kind == "binary":
@@ -290,8 +458,6 @@ def std_cell(value, col_type="other"):
         cleaned = CELL_CLEAN_RE.sub("", compact if kind != "string" else raw).upper()
         return cleaned
     return str(value)
-
-
 def hash_compare(s, t,col_type_list :list,tbname):
     messages = []
     errors = []
@@ -299,6 +465,8 @@ def hash_compare(s, t,col_type_list :list,tbname):
     tgt_hashes = []
     src_hash_pool = Counter()
     src_row_map = {}
+    src_hash_indexes = {}
+    src_records = []
     active_indexes = []
     for j in range(min(s.shape[1], t.shape[1])):
         col_type = _normalize_col_type(col_type_list[j] if j < len(col_type_list) else "other")
@@ -306,7 +474,8 @@ def hash_compare(s, t,col_type_list :list,tbname):
             active_indexes.append(j)
 
     for i in range(s.shape[0]):
-        src_row = [std_cell(s.iloc[i, j], col_type_list[j] if j < len(col_type_list) else "other") for j in active_indexes]
+        raw_row = [s.iloc[i, j] for j in range(s.shape[1])]
+        src_row = [std_cell(raw_row[j], col_type_list[j] if j < len(col_type_list) else "other") for j in active_indexes]
         src_hasher = hashlib.blake2b(digest_size=16)
         for cell in src_row:
             cell_bytes = cell.encode("utf-8", errors="replace")
@@ -317,9 +486,13 @@ def hash_compare(s, t,col_type_list :list,tbname):
         src_hash_pool[src_hash] += 1
         if src_hash not in src_row_map:
             src_row_map[src_hash] = src_row
+        record = {"raw": raw_row, "norm": src_row, "hash": src_hash, "matched": False}
+        src_records.append(record)
+        src_hash_indexes.setdefault(src_hash, []).append(len(src_records) - 1)
 
     for i in range(t.shape[0]):
-        tgt_row = [std_cell(t.iloc[i, j], col_type_list[j] if j < len(col_type_list) else "other") for j in active_indexes]
+        tgt_raw_row = [t.iloc[i, j] for j in range(t.shape[1])]
+        tgt_row = [std_cell(tgt_raw_row[j], col_type_list[j] if j < len(col_type_list) else "other") for j in active_indexes]
         tgt_hasher = hashlib.blake2b(digest_size=16)
         for cell in tgt_row:
             cell_bytes = cell.encode("utf-8", errors="replace")
@@ -329,13 +502,26 @@ def hash_compare(s, t,col_type_list :list,tbname):
         tgt_hashes.append(tgt_hash)
         if src_hash_pool[tgt_hash] > 0:
             src_hash_pool[tgt_hash] -= 1
+            for record_index in src_hash_indexes.get(tgt_hash, []):
+                if not src_records[record_index]["matched"]:
+                    src_records[record_index]["matched"] = True
+                    break
         else:
-            errors.append((('tgt', tgt_row), None, tgt_hash))
+            matched = False
+            for record in src_records:
+                if record["matched"]:
+                    continue
+                if _rows_fast_equal(record["raw"], record["norm"], tgt_raw_row, tgt_row, col_type_list, active_indexes):
+                    record["matched"] = True
+                    src_hash_pool[record["hash"]] -= 1
+                    matched = True
+                    break
+            if not matched:
+                errors.append((('tgt', tgt_row), None, tgt_hash))
 
-    for remain_hash, remain_count in src_hash_pool.items():
-        if remain_count > 0:
-            for _ in range(remain_count):
-                errors.append((('src',src_row_map.get(remain_hash)), remain_hash, None))
+    for record in src_records:
+        if not record["matched"]:
+            errors.append((('src', record["norm"]), record["hash"], None))
     if errors:
         message = "NO! hash比对存在%d行差异" % len(errors)
     else:
@@ -350,8 +536,6 @@ def hash_compare(s, t,col_type_list :list,tbname):
         "src_hashes": src_hashes,
         "tgt_hashes": tgt_hashes,
     }
-
-
 def std_row(s, t):
     pattern = r"[\[\]（{ }）()【】{}，,￥$\'\"“”‘’]"
     row = []
