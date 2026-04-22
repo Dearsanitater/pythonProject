@@ -69,8 +69,8 @@ def _stop_requested(control):
     return bool(control and control.is_set())
 def incr_switch(args,control=None):#调用swich执行sql用例
     print(f'进程号{os.getpid()}执行开始,更改输出流至queuemaintainer')
-    #old_stdout = sys.stdout#更改输出流
-    #sys.stdout = apps.QueueMaintainer(args['rule_id'],os.getpid(),args['usrid'])
+    old_stdout = sys.stdout#更改输出流
+    sys.stdout = apps.QueueMaintainer(args['rule_id'],os.getpid(),args['usrid'])
     print(f'进程号{os.getpid()},更改输出流完毕')
     print(f'进程号{os.getpid()}执行完毕，s总共耗时：\t\t毫秒')
     try:
@@ -93,7 +93,9 @@ def incr_switch(args,control=None):#调用swich执行sql用例
         print(f'进程号{os.getpid()}执行完毕，s总共耗时：\t\t%f毫秒' % ((T2 - T1) * 1000))
     except Exception as e:
         print(f'子进程异常_{e}')
-    #sys.stdout = old_stdout
+    finally:
+        sys.stdout = old_stdout
+        #apps.QueueMaintainer.stop(args['rule_id'])
     print('恢复输出流\nsubprocess done')
 def start_comp(args, control=None):
     print(f'进程号{os.getpid()}执行开始,更改输出流至queuemaintainer')
