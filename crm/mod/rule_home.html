@@ -340,6 +340,7 @@
             const socket = new WebSocket(`ws://192.168.62.130:8000/ws/message/`);
             socket.onmessage = function (event) {
                 const data = JSON.parse(event.data);
+
                 processMessage(data.rule_id, data.message);
             };
             socket.onclose = function () {

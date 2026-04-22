@@ -611,7 +611,7 @@ class read_case():
 # 建表延迟
 crt_delay = 1
 # dml/ddl延迟
-dml_delay = 1
+dml_delay = 1.5
 # 是否overflow，0、不处理行内容，1、缩短行款
 overflow = 0
 # 手动调试
@@ -629,7 +629,7 @@ if __name__ == '__main__':  # 手动调试
     T1 = time.perf_counter()
     for casefile in p.ergodic(type):
         p.analysis(casefile, pre_crt)
-        #p.execute(mssql,None)
+        p.execute(mssql,None)
     T2 = time.perf_counter()
     print('总共耗时：\t\t%f毫秒' % ((T2 - T1) * 1000))
     p.clean(mssql)

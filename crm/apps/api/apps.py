@@ -627,8 +627,10 @@ class QueueMaintainer:
         pass
     def process_message(self, process_id, message):
         """处理队列中的消息，可能是打印到控制台或Web页面"""
-        #sys.stdout = sys.__stdout__
-        #print(f"[进程{process_id}] {message}")
+        # old_std=sys.stdout
+        # sys.stdout = sys.__stdout__
+        # print(f"[进程{process_id}] ruleid{self.uuid}{message}")
+        # sys.stdout=old_std
         channels_layer=get_channel_layer()
         if channels_layer is None:
             return
