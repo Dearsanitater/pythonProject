@@ -267,7 +267,7 @@ class read_case():
                 try:
                     if bool(re.sub('\n','',item)):
                         self.current_cursor.execute(item)
-                        conn.commit();print(item,'0.2s');time.sleep(crt_delay)
+                        conn.commit();print(item);time.sleep(crt_delay)
                         if self._check_control(event, '建表预处理'):
                             return
                     else:

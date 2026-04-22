@@ -7,7 +7,7 @@ from multiprocessing.connection import Listener, Client
 import queue
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-import threading,sys,time
+import threading,sys,time,re
 import ptest,process_test,configparser,sqlite3,uuid
 from concurrent.futures import ProcessPoolExecutor
 from django.http import JsonResponse,HttpResponse,FileResponse,StreamingHttpResponse
@@ -22,6 +22,7 @@ process_pool = ProcessPoolExecutor(max_workers=4)
 #conn = sqlite3.connect('identifier.sqlite')
 exec_task={}
 DB_CONFIG_PATH = r'resource/DB.ini'
+DJANGO_LOG_DIR = os.path.join(settings.BASE_DIR, 'crm', 'django_logs')
 WORKER_AUTHKEY = b'hbase-worker'
 WORKER_LOCK = threading.Lock()
 WORKERS = {
@@ -42,9 +43,8 @@ def _refresh_task(rule_id):
     if not task:
         return None
     process = task.get('process')
-    if process and not process.is_alive() and task.get('status') not in ('finished', 'killed'):
-        task['status'] = 'finished'
-        task['finished_at'] = time.time()
+    if process and not process.is_alive() and task.get('status') not in ('finished', 'killed', 'failed'):
+        task_state_machine(task, 'finish')
     return task
 
 
@@ -78,17 +78,47 @@ def _register_task(rule_id, task_type, process, stop_event, resume_event):
         'task_type': task_type,
         'stop_event': stop_event,
         'resume_event': resume_event,
-        'status': 'running',
+        'status': 'idle',
         'started_at': time.time(),
         'finished_at': None,
     }
+    task_state_machine(exec_task[rule_id], 'start')
     return exec_task[rule_id]
 
 
-def _update_task_status(task, status):
-    task['status'] = status
-    if status in ('finished', 'killed'):
+def task_state_machine(task, event):
+    transitions = {
+        'idle': {'start': 'running'},
+        'running': {
+            'pause': 'paused',
+            'stop': 'stopping',
+            'kill': 'killed',
+            'finish': 'finished',
+            'fail': 'failed',
+        },
+        'paused': {
+            'resume': 'running',
+            'stop': 'stopping',
+            'kill': 'killed',
+            'fail': 'failed',
+        },
+        'stopping': {
+            'finish': 'finished',
+            'kill': 'killed',
+            'fail': 'failed',
+        },
+        'finished': {},
+        'killed': {},
+        'failed': {},
+    }
+    current = task.get('status') or 'idle'
+    next_status = transitions.get(current, {}).get(event)
+    if not next_status:
+        return False, f'{current} 状态不允许执行 {event}'
+    task['status'] = next_status
+    if next_status in ('finished', 'killed', 'failed'):
         task['finished_at'] = time.time()
+    return True, next_status
 
 
 def _task_not_found(rule_id):
@@ -105,6 +135,23 @@ def _read_db_ini():
     cfg = configparser.ConfigParser(interpolation=None)
     cfg.read(DB_CONFIG_PATH, encoding='utf-8')
     return cfg
+
+
+def _db_source_options():
+    cfg = _read_db_ini()
+    sources = []
+    for section in cfg.sections():
+        if section == '400_type':
+            continue
+        data = dict(cfg.items(section))
+        data['name'] = section
+        data['schema'] = data.get('schema') or data.get('namespace') or data.get('databasename') or ''
+        data['host'] = data.get('host', '')
+        data['port'] = data.get('port', '')
+        data['type'] = data.get('type', '')
+        data['databasename'] = data.get('databasename', '')
+        sources.append(data)
+    return sources
 
 
 def _get_hbase_section(dbname):
@@ -345,6 +392,7 @@ def exec_compare(request,rule_id):
         return JsonResponse({'status': 'success', 'message': '比对任务已启动', 'task': _serialize_task(rule_id, task)}, status=200)
     return redirect('/rule')
 def create_rule(request):
+    db_sources = _db_source_options()
     if request.method == 'POST':
         # 获取表单参数
         user_id = int(request.POST.get('user_id'))
@@ -386,7 +434,7 @@ def create_rule(request):
         json_data={'status': 'success', 'message': 'Rule added successfully'}
         # GET 请求返回表单页面
         return redirect('/rule')
-    return render(request, 'create_rules.html')
+    return render(request, 'create_rules.html', {'db_sources': db_sources, 'db_sources_json': json.dumps(db_sources, ensure_ascii=False)})
 def del_rule(request,rule_id):
     conn = sqlite3.connect('identifier.sqlite')  # 连接到数据库
     cursor = conn.cursor()
@@ -455,9 +503,11 @@ def shut_rule(request,rule_id):
         task = _get_running_task(rule_id)
         if not task:
             return _task_not_found(rule_id)
+        ok, message = task_state_machine(task, 'stop')
+        if not ok:
+            return JsonResponse({'status': 'error', 'message': message, 'task': _serialize_task(rule_id, task)}, status=409)
         task['stop_event'].set()
         task['resume_event'].set()
-        _update_task_status(task, 'stopping')
         return JsonResponse({'status': 'success', 'message': '已发送停止指令', 'task': _serialize_task(rule_id, task)}, status=200)
     else:
         return JsonResponse({"error": "11", "message": '错误访问方法'}, status=500)
@@ -471,8 +521,10 @@ def pause_rule(request, rule_id):
         return _task_not_found(rule_id)
     if task.get('status') == 'paused':
         return JsonResponse({'status': 'success', 'message': '任务已经处于暂停状态', 'task': _serialize_task(rule_id, task)}, status=200)
+    ok, message = task_state_machine(task, 'pause')
+    if not ok:
+        return JsonResponse({'status': 'error', 'message': message, 'task': _serialize_task(rule_id, task)}, status=409)
     task['resume_event'].clear()
-    _update_task_status(task, 'paused')
     return JsonResponse({'status': 'success', 'message': '已发送暂停指令', 'task': _serialize_task(rule_id, task)}, status=200)
 
 
@@ -482,10 +534,10 @@ def resume_rule(request, rule_id):
     task = _get_running_task(rule_id)
     if not task:
         return _task_not_found(rule_id)
-    if task.get('status') == 'stopping':
-        return JsonResponse({'status': 'error', 'message': '任务正在停止，不能继续'}, status=409)
+    ok, message = task_state_machine(task, 'resume')
+    if not ok:
+        return JsonResponse({'status': 'error', 'message': message, 'task': _serialize_task(rule_id, task)}, status=409)
     task['resume_event'].set()
-    _update_task_status(task, 'running')
     return JsonResponse({'status': 'success', 'message': '已恢复任务', 'task': _serialize_task(rule_id, task)}, status=200)
 
 
@@ -504,9 +556,11 @@ def kill_rule(request, rule_id):
         if process.is_alive():
             process.kill()
             process.join(timeout=2)
+    ok, message = task_state_machine(task, 'kill')
+    if not ok:
+        return JsonResponse({'status': 'error', 'message': message, 'task': _serialize_task(rule_id, task)}, status=409)
     task['stop_event'].set()
     task['resume_event'].set()
-    _update_task_status(task, 'killed')
     return JsonResponse({'status': 'success', 'message': '任务已强制终止', 'task': _serialize_task(rule_id, task)}, status=200)
 
 
@@ -528,6 +582,23 @@ def get_rule(request):
         #return JsonResponse(response)
         return render(request,'rule_home.html',response)
 #纯json输出规则界面
+def get_rule_test(request, rule_id=None):
+    if request.method == 'GET':
+        rules = ptest.get_rule()
+        source_map = {item['name']: item for item in _db_source_options()}
+        for rule in rules.values():
+            src_info = source_map.get(rule.get('src', ''), {})
+            tgt_info = source_map.get(rule.get('tgt', ''), {})
+            rule['src_host'] = src_info.get('host', '')
+            rule['src_schema'] = src_info.get('schema', '')
+            rule['src_type'] = src_info.get('type', '')
+            rule['tgt_host'] = tgt_info.get('host', '')
+            rule['tgt_schema'] = tgt_info.get('schema', '')
+            rule['tgt_type'] = tgt_info.get('type', '')
+        selected_rule = rules.get(rule_id) if rule_id else None
+        return render(request, 'rule_test.html', {'rules': rules, 'selected_rule': selected_rule, 'selected_rule_id': rule_id})
+
+
 def jsonrule(request):
     if request.method=='GET':
         set=(ptest.get_rule())
@@ -582,67 +653,204 @@ def download_file(request):
     response["Content-Disposition"] = 'attachment; filename="filtered_output.xlsx"'
     return response
 
+
+def django_logs(request):
+    os.makedirs(DJANGO_LOG_DIR, exist_ok=True)
+
+    def safe_log_path(rel_path):
+        normalized = os.path.normpath(rel_path or '')
+        if normalized in ('', '.'):
+            return None
+        target = os.path.abspath(os.path.join(DJANGO_LOG_DIR, normalized))
+        base = os.path.abspath(DJANGO_LOG_DIR)
+        if os.path.commonpath([base, target]) != base:
+            return None
+        if not os.path.isfile(target):
+            return None
+        return target
+
+    rel_file = request.GET.get('file', '')
+    log_path = safe_log_path(rel_file)
+    if log_path and request.GET.get('download') == '1':
+        return FileResponse(open(log_path, 'rb'), as_attachment=True, filename=os.path.basename(log_path))
+
+    entries = []
+    for root, dirs, files in os.walk(DJANGO_LOG_DIR):
+        dirs.sort()
+        files.sort()
+        rel_root = os.path.relpath(root, DJANGO_LOG_DIR)
+        depth = 0 if rel_root == '.' else rel_root.count(os.sep) + 1
+        if rel_root != '.':
+            entries.append({
+                'type': 'dir',
+                'name': os.path.basename(root),
+                'rel_path': rel_root.replace(os.sep, '/'),
+                'depth': depth - 1,
+                'size': '',
+                'mtime': '',
+            })
+        for file_name in files:
+            full_path = os.path.join(root, file_name)
+            rel_path = os.path.relpath(full_path, DJANGO_LOG_DIR)
+            stat = os.stat(full_path)
+            entries.append({
+                'type': 'file',
+                'name': file_name,
+                'rel_path': rel_path.replace(os.sep, '/'),
+                'depth': depth,
+                'size': stat.st_size,
+                'mtime': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat.st_mtime)),
+            })
+
+    content = ''
+    selected = ''
+    if log_path:
+        selected = os.path.relpath(log_path, DJANGO_LOG_DIR).replace(os.sep, '/')
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+
+    return render(request, 'log_browser.html', {
+        'entries': entries,
+        'selected': selected,
+        'content': content,
+    })
+
+
 class QueueMaintainer:
     def __init__(self,uuid,pid,usrid):
         self.que_dic={}
         self.pid=pid
         self.uuid=uuid
         self.user=usrid
-        self.queue=queue.Queue()
-        self.lock = threading.Lock()
+        self.queue=queue.Queue(maxsize=2000)
         self.running=True
+        self.dropped_count=0
+        self.log_file = None
+        self.log_path = self.build_log_path()
+        self.open_log_file()
         self.que_dic[f'{pid}']={'uuid':f'{uuid}','queue':self.queue}
         #初始化时就调用异步线程读队列
         self.consumer_thread = threading.Thread(target=self.consume_queue, daemon=True)
         self.consumer_thread.start()
+    def build_log_path(self):
+        cfg = configparser.ConfigParser()
+        cfg.read(config_file, encoding='utf-8')
+        rule_name = cfg.get(str(self.uuid), 'rule_name', fallback=str(self.uuid))
+        safe_rule_name = re.sub(r'[\\/:*?"<>|\s]+', '_', rule_name).strip('._')
+        if not safe_rule_name:
+            safe_rule_name = str(self.uuid)
+        timestamp = time.strftime('%y%m%d_%H%M%S')
+        return os.path.join(DJANGO_LOG_DIR, safe_rule_name, f'{timestamp}.log')
+    def open_log_file(self):
+        try:
+            os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+            self.log_file = open(self.log_path, 'a', encoding='utf-8', buffering=1)
+        except Exception as e:
+            self.log_file = None
+            print(f'QueueMaintainer open log file error: {e}', file=sys.__stderr__)
     def write(self,message):
-        #with self.lock:#写队列时加锁
-        if message.strip():
-            #self.que_dic[f'{self.pid}']['queue'].put((self.pid,message))
-            self.queue.put((self.pid, message))
+        if message != '':
+            try:
+                self.queue.put_nowait((self.pid, message))
+            except queue.Full:
+                self.dropped_count += 1
     def get_que(self,pid):
         return self.que_dic[f'{self.pid}']
     def consume_queue(self):
-        while self.running:
+        while self.running or not self.queue.empty():
             try:
-                with self.lock:
-                    if not self.queue.empty():
-                        process_id, message = self.queue.get(timeout=1)
-                        self.process_message(process_id, message)
-                        self.queue.task_done()  # 确保消费完成
-                #self.queue.task_done()
+                process_id, message = self.queue.get(timeout=0.2)
+                messages = [message]
+                self.queue.task_done()  # 确保消费完成
+                deadline = time.monotonic() + 0.15
+                while len(messages) < 50:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        _, next_message = self.queue.get(timeout=remaining)
+                        messages.append(next_message)
+                        self.queue.task_done()
+                    except queue.Empty:
+                        break
+                batch_message = ''.join(messages)
+                self.write_log_file(batch_message)
+                self.process_message(process_id, batch_message)
             except Exception as e:
+                if isinstance(e, queue.Empty):
+                    continue
+                if sys.is_finalizing():
+                    break
                 print(f'QueueMaintainer consume_queue error: {e}', file=sys.__stderr__)
                 continue
 
         print(f'进程{self.pid}停止读取队列，已清空队列')
     def stop(self):
         self.running=False
-        self.que_dic[f'{self.pid}'] = {'uuid': f'{uuid}', 'queue': queue.Queue()}
-        self.consumer_thread.join()
+        if self.dropped_count:
+            try:
+                self.queue.put_nowait((self.pid, f'日志输出过快，已丢弃 {self.dropped_count} 条输出'))
+            except queue.Full:
+                pass
+        self.consumer_thread.join(timeout=3)
+        if self.consumer_thread.is_alive():
+            self.flush_q()
+        if self.log_file:
+            try:
+                self.log_file.close()
+            except Exception:
+                pass
     def flush_q(self):
-        self.que_dic[f'{self.pid}'] = {'uuid': f'{uuid}', 'queue': queue.Queue()}
-        pass
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+                self.queue.task_done()
+            except queue.Empty:
+                break
     def flush(self):
         pass
+    def write_log_file(self, message):
+        if not self.log_file:
+            return
+        try:
+            self.log_file.write(message)
+            if not message.endswith('\n'):
+                self.log_file.write('\n')
+            self.log_file.flush()
+        except Exception as e:
+            print(f'QueueMaintainer write log file error: {e}', file=sys.__stderr__)
+            try:
+                self.log_file.close()
+            except Exception:
+                pass
+            self.log_file = None
     def process_message(self, process_id, message):
         """处理队列中的消息，可能是打印到控制台或Web页面"""
         # old_std=sys.stdout
         # sys.stdout = sys.__stdout__
         # print(f"[进程{process_id}] ruleid{self.uuid}{message}")
         # sys.stdout=old_std
+        if sys.is_finalizing():
+            self.running = False
+            return
         channels_layer=get_channel_layer()
         if channels_layer is None:
             return
         group_name = 'messages_group'
-        sender = async_to_sync(channels_layer.group_send)
-        sender(
-            group_name,  # 用户对应的 WebSocket 组
-            {
-                'type': 'send_message',  # 消息类型
-                'rule_id': self.uuid,  # 进程 uuID
-                'message': message  # 消息内容
-            }
-        )
+        try:
+            sender = async_to_sync(channels_layer.group_send)
+            sender(
+                group_name,  # 用户对应的 WebSocket 组
+                {
+                    'type': 'send_message',  # 消息类型
+                    'rule_id': self.uuid,  # 进程 uuID
+                    'message': message  # 消息内容
+                }
+            )
+        except RuntimeError as e:
+            if sys.is_finalizing() or 'interpreter shutdown' in str(e):
+                self.running = False
+                return
+            raise
 
 
