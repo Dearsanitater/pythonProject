@@ -629,7 +629,7 @@ if __name__ == '__main__':  # 手动调试
     T1 = time.perf_counter()
     for casefile in p.ergodic(type):
         p.analysis(casefile, pre_crt)
-        p.execute(mssql,None)
+        #p.execute(mssql,None)
     T2 = time.perf_counter()
     print('总共耗时：\t\t%f毫秒' % ((T2 - T1) * 1000))
     p.clean(mssql)

@@ -74,7 +74,9 @@ class get_casefile ():
         err=self.cons_err
         seq=0
         now = datetime.datetime.now().strftime("%Y-%m-%d %H").replace('-', '').replace(' ', '')
+
         wb=openpyxl.load_workbook(r'resource/test_report/report.xlsx')
+
         sheet_name=wb.sheetnames
         while now+db+str(seq) in sheet_name:
             seq+=1
