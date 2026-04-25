@@ -2232,9 +2232,12 @@ class ergodic_database():
         self.isom=[]
         self.np_value=err_handling#1：自动忽略所有无主键，2：忽略所有出错表，3：忽略所有问题表，4：手动选择
         self.map_analysis(compare_file)
+        compare_total_start = stime.monotonic()
         concurrency=4#并发度
         tmp_tb_list=[]
+        schema_start = stime.monotonic()
         src,tgt=self.define_type()
+        schema_cost_ms = (stime.monotonic() - schema_start) * 1000
         if src[0]!= tgt[0]:
             xsrc=[]
             xtgt=[]
@@ -2273,7 +2276,10 @@ class ergodic_database():
                     self.bfe_last.append(table_log)
             return tmp_tb_list
 
+        tasklist_start = stime.monotonic()
         tasklist=pre_compare(src,tgt)
+        tasklist_cost_ms = (stime.monotonic() - tasklist_start) * 1000
+        compare_loop_start = stime.monotonic()
         with ThreadPoolExecutor(max_workers=concurrency) as cons_data_tp:
             futures = {}
             next_index = 0
@@ -2302,6 +2308,9 @@ class ergodic_database():
             if stop_requested:
                 #self.bfe_last.append('compare任务已收到停止指令，停止继续提交新表')
                 print('compare任务已收到停止指令，停止继续提交新表')
+        compare_loop_cost_ms = (stime.monotonic() - compare_loop_start) * 1000
+        compare_total_cost_ms = (stime.monotonic() - compare_total_start) * 1000
+        print(f'[phase] schema={schema_cost_ms:.2f}ms tasklist={tasklist_cost_ms:.2f}ms compare_loop={compare_loop_cost_ms:.2f}ms total={compare_total_cost_ms:.2f}ms')
         # self.xlsx(self.bfe_last)
         #print(self.bfe_last)
         #打表
@@ -2358,6 +2367,62 @@ class ergodic_database():
                 print('\033[0;34m ！ \033[0m%s\t源备字段数不同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
                 self.bfe.append('！ %s\t源备字段数不同，源端字段：%d \t备端字段%d'%(tab_name,len(tab_col),len(a)))
             print('表 %s 比对完成，耗时%.2f毫秒'%(tab_name, (stime.monotonic()-start)*1000))
+            return {
+                'messages': list(self.bfe),
+                'col_result': table_col_result,
+                'cons_err': table_cons_err,
+            }
+    def cons_data_compare(self,tab_name,a,tab_col,if_cpdata=0):
+            start = stime.monotonic()
+            self._reset_compare_context(tab_name)
+            table_col_result = None
+            table_cons_err = None
+            columns_cost_ms = 0.0
+            constraints_cost_ms = 0.0
+            rows_cost_ms = 0.0
+            if self._check_control(f'表 {tab_name}'):
+                return {
+                    'messages': list(self.bfe),
+                    'col_result': table_col_result,
+                    'cons_err': table_cons_err,
+                }
+            print(f'表 {tab_name} 开始比对')
+            if len(a) == len(tab_col) or (self.tgt_db_t == 'hbase' and len(a) < len(tab_col)):
+                print('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d' % (tab_name, len(tab_col), len(a)))
+                self.bfe.append('\033[0;34m %s \033[0m源备字段数相同，源端字段：%d \t备端字段%d' % (tab_name, len(tab_col), len(a)))
+                ora_search_column = self.col_compair(tab_col, a)
+                if self._check_control(f'表 {tab_name}'):
+                    return {
+                        'messages': list(self.bfe),
+                        'col_result': table_col_result,
+                        'cons_err': table_cons_err,
+                    }
+                constraints_start = stime.monotonic()
+                if self.tgt_db_t != 'hbase':
+                    tgt_cons = self._run_cons_analysis(tab_name, len(a), 'tgt')
+                    src_cons = self._run_cons_analysis(tab_name, len(a), 'src')
+                    order_col, table_col_result = self.cons_compare(tgt_cons, src_cons)
+                else:
+                    src_cons = self._run_cons_analysis(tab_name, len(a), 'src')
+                    order_col, table_col_result = self.cons_compare(src_cons, src_cons)
+                constraints_cost_ms = (stime.monotonic() - constraints_start) * 1000
+                if if_cpdata == 1:
+                    if self._check_control(f'表 {tab_name}'):
+                        return {
+                            'messages': list(self.bfe),
+                            'col_result': table_col_result,
+                            'cons_err': table_cons_err,
+                        }
+                    rows_start = stime.monotonic()
+                    table_cons_err = self._run_row_contain(tab_name, tab_col, a, order_col, ora_search_column)
+                    rows_cost_ms = (stime.monotonic() - rows_start) * 1000
+            elif self.src_db_t == 'hbase':
+                pass
+            else:
+                print('\033[0;34m ！ \033[0m%s\t源备字段数不同，源端字段：%d \t备端字段%d' % (tab_name, len(tab_col), len(a)))
+                self.bfe.append('！ %s\t源备字段数不同，源端字段：%d \t备端字段%d' % (tab_name, len(tab_col), len(a)))
+            print(f'[timing] {tab_name} columns={columns_cost_ms:.2f}ms constraints={constraints_cost_ms:.2f}ms rows={rows_cost_ms:.2f}ms')
+            print('表 %s 比对完成，耗时%.2f毫秒' % (tab_name, (stime.monotonic() - start) * 1000))
             return {
                 'messages': list(self.bfe),
                 'col_result': table_col_result,
