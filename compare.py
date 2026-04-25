@@ -2364,7 +2364,7 @@ class ergodic_database():
                 'cons_err': table_cons_err,
             }
 if __name__ == '__main__':#refact
-    src = 'mssql##';tgt = 'hyperbase184';err_handling = 3;if_cpdata=1#9.0常用 mysql##/oracle/mssql##
+    src = 'mssql##';tgt = 'mssql##';err_handling = 3;if_cpdata=1#9.0常用 mysql##/oracle/mssql##
     import opg_refactor as opgr
     import compare_refactor as cr
     p=cr.ergodic_database()
