@@ -4,8 +4,23 @@ import ptest
 from django.http import JsonResponse,HttpResponse
 import opg
 import configparser
+
+
+def _read_rule_config(parser):
+    last_error = None
+    for encoding in ('utf-8', 'gbk', 'utf-8-sig'):
+        try:
+            parser.read(r'resource/rule_config.ini', encoding=encoding)
+            return encoding
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return 'utf-8'
+
+
 config=configparser.RawConfigParser()
-config.read(r'resource/rule_config.ini', encoding='utf-8')
+_read_rule_config(config)
 from concurrent.futures import ProcessPoolExecutor
 process_pool = ProcessPoolExecutor(max_workers=4)
 if __name__=='__ii__':

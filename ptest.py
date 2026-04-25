@@ -18,14 +18,28 @@ import crm.apps.api.apps as apps
 from django.conf import settings
 cfg_dir=f'{settings.BASE_DIR}/resource/rule_config.ini'
 
+
+def _read_rule_config(parser):
+    # 规则配置文件历史上不是纯 UTF-8，这里兼容 GBK。
+    last_error = None
+    for encoding in ('utf-8', 'gbk', 'utf-8-sig'):
+        try:
+            parser.read(cfg_dir, encoding=encoding)
+            return encoding
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return 'utf-8'
+
 config=configparser.RawConfigParser()
-config.read(r'resource/rule_config.ini', encoding='utf-8')
+_read_rule_config(config)
 print("Current working directory:", os.getcwd())
 
 def rule(section,s):
     rule_dic = []
     config = configparser.RawConfigParser()
-    config.read(cfg_dir, encoding='utf-8')
+    _read_rule_config(config)
     #set = {section: dict(config.items(section)) for section in config.sections()}
     set =dict(config[f'{section}'])
     config.read(f'{settings.BASE_DIR}/resource/DB.ini',encoding='utf-8')
@@ -60,7 +74,7 @@ def get_rule():
     file_path = cfg_dir
     #print(f"Last modified: {os.path.getmtime(cfg_dir)}")
     config = configparser.RawConfigParser()
-    config.read(cfg_dir, encoding='utf-8')
+    _read_rule_config(config)
     set = {section: dict(config.items(section)) for section in config.sections()}
     return set
 def _stop_requested(control):

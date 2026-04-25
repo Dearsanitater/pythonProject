@@ -23,7 +23,23 @@ config = configparser.RawConfigParser()
 rule_cfg = configparser.RawConfigParser()
 case_cfg = configparser.RawConfigParser()
 config.read(r'resource/config.ini', encoding='utf-8')
-rule_cfg.read(r'resource/rule_config.ini', encoding='utf-8')
+
+
+def _read_rule_config(parser):
+    # 历史规则文件编码不统一，兼容 GBK。
+    last_error = None
+    for encoding in ('utf-8', 'gbk', 'utf-8-sig'):
+        try:
+            parser.read(r'resource/rule_config.ini', encoding=encoding)
+            return encoding
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return 'utf-8'
+
+
+_read_rule_config(rule_cfg)
 case_cfg.read(r'resource/case_dir.ini', encoding='utf-8')
 pg_case = r'D:\Info\case_resource\postgre\pg_basedml'
 # mss_case=r'resource/resource101'
@@ -38,7 +54,7 @@ oracle_case = r'D:\Info\case_resource\oracle\test'
 root_directory = r'D:\Info\case_resource'  # 用例包#############
 db2_case = r'D:\Info\case_resource\db2\db2-sql'  # 表修复数据类型路径
 
-dds_mapping = json.loads(config.get('400_type', 'type'))
+dds_mapping = json.loads(config.get('400type', 'type'))
 ignore_casefile=['DDL']#忽略带关键字的case文件，常见关键字 DML/DDL/PK/NOPK/OBJ/
 
 class db2_conn():

@@ -1,6 +1,6 @@
 
 import os
-os.chdir('..')
+#os.chdir('..')
 import opg
 import sys
 from django.shortcuts import render

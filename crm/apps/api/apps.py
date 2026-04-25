@@ -31,6 +31,20 @@ WORKERS = {
 }
 
 
+def _read_rule_config(parser):
+    # 历史 rule_config.ini 里有 GBK 内容，先试 UTF-8，失败再回退。
+    last_error = None
+    for encoding in ('utf-8', 'gbk', 'utf-8-sig'):
+        try:
+            parser.read(config_file, encoding=encoding)
+            return encoding
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return 'utf-8'
+
+
 def _build_task_control():
     stop_event = Event()
     resume_event = Event()
@@ -418,7 +432,7 @@ def create_rule(request):
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
         #构建需要写入的内容
         config = configparser.ConfigParser()
-        config.read('resource/rule_config.ini',encoding='utf-8')
+        _read_rule_config(config)
         if not config.has_section(str(rule_id)):
             config.add_section(str(rule_id))
         config.set(str(rule_id), 'user_id', str(user_id))
@@ -429,7 +443,7 @@ def create_rule(request):
         config.set(str(rule_id), 'unique_number', str(unique_number))
         config.set(str(rule_id), 'error_handler', str(error_handler))
         # 将更改写回配置文件
-        with open('resource/rule_config.ini', 'w') as configfile:
+        with open(config_file, 'w', encoding='utf-8') as configfile:
             config.write(configfile)
         json_data={'status': 'success', 'message': 'Rule added successfully'}
         # GET 请求返回表单页面
@@ -441,7 +455,7 @@ def del_rule(request,rule_id):
     sql=f'''delete from main.rule_cmp where rule_id="{rule_id}"'''
     print(sql)
     config = configparser.ConfigParser()
-    config.read('resource/rule_config.ini', encoding='utf-8')
+    _read_rule_config(config)
     cursor.execute(sql)
     if config.has_section(rule_id):
         # 删除指定的 section
@@ -734,7 +748,7 @@ class QueueMaintainer:
         self.consumer_thread.start()
     def build_log_path(self):
         cfg = configparser.ConfigParser()
-        cfg.read(config_file, encoding='utf-8')
+        _read_rule_config(cfg)
         rule_name = cfg.get(str(self.uuid), 'rule_name', fallback=str(self.uuid))
         safe_rule_name = re.sub(r'[\\/:*?"<>|\s]+', '_', rule_name).strip('._')
         if not safe_rule_name:
