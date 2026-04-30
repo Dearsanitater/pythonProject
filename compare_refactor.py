@@ -149,6 +149,11 @@ class ergodic_database(compare.ergodic_database):
             tgt = self._load_endpoint(self.tgt_db, "tgt")
         else:
             list_hbasetbname=self._load_endpoint(self.tgt_db, "tgt");tgt_tmp_list=copy.deepcopy(src[1])#src[1]是表名列表，hbase方法仅返回表数量，表名直接拿源端，列信息后续直接拿源端信息
-            tgt_tmp_list=[item for item in tgt_tmp_list if item['tab_name'] in list_hbasetbname]
+            #tgt_tmp_list=[item['tab_name']=item['tab_name'].upper() for item in tgt_tmp_list if item['tab_name'].upper() in list_hbasetbname]
+            tgt_tmp_list = [
+                {**item, 'tab_name': item['tab_name'].upper()}  # 创建新字典并更新tab_name
+                for item in tgt_tmp_list
+                if item['tab_name'].upper() in list_hbasetbname
+            ]
             tgt=(len(list_hbasetbname),tgt_tmp_list)
         return src, tgt

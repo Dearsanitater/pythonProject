@@ -1605,7 +1605,7 @@ class ergodic_database():
             t = pandas.DataFrame(xxx)
         elif self.conf_tgt=='hbase':
             #hc传tbcol，按照源库顺序扫描，直接复制到dataframe，返回dataframe
-            t=hc.scan_one_tb(tbname,tbcol)
+            t=hc.scan_one_tb(tbname.upper(),tbcol)
         else:#如果是hdfs的parquet文件，先预处理成dataframe
             t=self.pretreatment_hdfs(Pyarrow_tname)
             pass
@@ -1862,7 +1862,7 @@ class ergodic_database():
             #     row=[]
             #err=standard.std_row(s,t)['errors']
             #hash比较
-            err=standard.hash_compare(s,t,[colType['type'] for colType in tbcol],tbname)['errors']
+            err=standard.hash_compare(s,t,[colType['type'] for colType in tbcol],tbname,uppercase=self.conf_tgt=='hbase')['errors']
         elif len(s)!=0 and len(t)!=0 and s.shape[0]!=t.shape[0] and s.shape[1]==t.shape[1]:
             print('NO! 行数不同,源%d行,备%d行'%(s.shape[0],t.shape[0]));self.bfe.append('NO! 行数不同,源%d行,备%d行'%(len(s[0]),len(t[0])))
         elif len(s)!=0 and len(t)!=0 and len(s[0])==len(t[0]) and s.shape[1]!=t.shape[1]:
@@ -2107,7 +2107,7 @@ class ergodic_database():
     def search_dicts(self,dlist,key, value,y):
         self.templist = []
         for d in dlist:
-            if key in d and d[key].upper() == value: #and not value.upper().startswith('MSREPL'):
+            if key in d and d[key].upper() == value.upper(): #and not value.upper().startswith('MSREPL'):
                 if len(d['tab_col'])==len(y['tab_col']):
                     self.pre_dict(d,y)
                 if len(d['tab_col'])<len(y['tab_col']) and self.tgt_db_t!='hbase':
@@ -2429,7 +2429,7 @@ class ergodic_database():
                 'cons_err': table_cons_err,
             }
 if __name__ == '__main__':#refact
-    src = 'mssql##';tgt = 'mssql##';err_handling = 3;if_cpdata=1#9.0常用 mysql##/oracle/mssql##
+    src = 'mssql##';tgt = 'hyperbase184';err_handling = 3;if_cpdata=1#9.0常用 mysql##/oracle/mssql##
     import opg_refactor as opgr
     import compare_refactor as cr
     p=cr.ergodic_database()

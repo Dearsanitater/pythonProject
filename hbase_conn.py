@@ -119,12 +119,14 @@ class connFactory():
     def scan_one_tb(self,tbname,tbcol):
         tmp_dict = {}
         tmp_list = []
+        col_map = {}
         for item in tbcol:
             col_name = item['col_name']
             tmp_list.append(col_name)
             tmp_dict[col_name] = ''
+            col_map[str(col_name).upper()] = col_name
         conn = self.conn
-        sctbname = f'{self.schema}:{tbname}'
+        sctbname = f'{self.schema}:{str(tbname).upper()}'
         scan = self.Scan()
         table = conn.getTable(self.TableName.valueOf(sctbname))
         scanner = None
@@ -139,8 +141,9 @@ class connFactory():
                         cell.getQualifierOffset(),
                         cell.getQualifierLength(),
                     ))
-                    if qual in row_data:
-                        row_data[qual] = str(self.Bytes.toString(
+                    target_col = col_map.get(qual.upper())
+                    if target_col is not None:
+                        row_data[target_col] = str(self.Bytes.toString(
                             cell.getValueArray(),
                             cell.getValueOffset(),
                             cell.getValueLength(),
@@ -187,7 +190,7 @@ class connFactory():
             use_namespace = namespace or self.schema
             tbs=admin.listTableNamesByNamespace(use_namespace)
             for t in tbs:
-                result.append(str(t.getQualifierAsString()))
+                result.append(str(t.getQualifierAsString()).upper())
             print(result)
             return result
         finally:

@@ -290,7 +290,7 @@ class read_case():
                         continue
                 except None or (pyodbc.ProgrammingError,pymssql._pymssql.OperationalError, psycopg2.Error, pymssql.Error, pymysql.Error,cx_Oracle.Error) as e:
                     print(e)
-            print(f'crt全部执行完毕，等待{3+2*len(crtlist)}s开始dml');self.interruptible_sleep(event,3+2*len(crtlist))
+            print(f'crt全部执行完毕，等待{3+2*len(crtlist)}s开始dml');self.interruptible_sleep(event,1+2*len(crtlist))
         else:
             pass
         for i in range(self.numer):
@@ -625,9 +625,9 @@ class read_case():
             print(f'{label} 已继续')
         return False
 # 建表延迟
-crt_delay = 1
+crt_delay =1
 # dml/ddl延迟
-dml_delay = 1.5
+dml_delay = 1
 # 是否overflow，0、不处理行内容，1、缩短行款
 overflow = 0
 # 手动调试
@@ -645,7 +645,7 @@ if __name__ == '__main__':  # 手动调试
     T1 = time.perf_counter()
     for casefile in p.ergodic(type):
         p.analysis(casefile, pre_crt)
-        #p.execute(mssql,None)
+        p.execute(mssql,None)
     T2 = time.perf_counter()
     print('总共耗时：\t\t%f毫秒' % ((T2 - T1) * 1000))
     p.clean(mssql)
@@ -667,7 +667,7 @@ if __name__ == '__main1__':
     T1 = time.perf_counter()
     for casefile in p.ergodic(type):
         p.analysis(casefile)
-        p.execute(mssql)
+        #p.execute(mssql)
     T2 = time.perf_counter()
     print('总共耗时：\t\t%f毫秒' % ((T2 - T1) * 1000))
     p.clean(mssql)
