@@ -30,8 +30,11 @@ config.read(r'resource/config.ini', encoding='utf-8')
 import pdb
 class MysqlConn():
 
-    def __init__(self,database):
+    def __init__(self,database,if_django=None):
         self.currentConn = None
+        if if_django:
+            config.read(r'resource/DB.ini', encoding='utf-8')
+        else:pass
         print(database)
         #pdb.set_trace()
         self.host = config.get(database,'host')

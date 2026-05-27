@@ -58,7 +58,7 @@ def rule(section,s):
         'tgt_type':dict(config[f"{set['tgt']}"])['type']
     }
     if s == 's':
-        c['conn']=opg.MysqlConn(set['src'])
+        c['conn']=opg.MysqlConn(set['src'],1)#加个参数，1-django任务，需要读取db.ini,0-本地任务，读config
         conn = c['conn']
         method_map = {
             "ob_oracle": conn.open_obora, "ob_mysql": conn.open, "mysql": conn.open, "sqlserver": conn.open_mssql,

@@ -46,7 +46,8 @@ pg_case = r'D:\Info\case_resource\postgre\pg_basedml'
 mysql_case = r'D:\Info\case_resource\mysql\test'
 mss_case_test=r'D:\Info\case_resource\sqlserver\test'
 mss_case_all = r'D:\Info\case_resource\sqlserver\all'
-mss_old_case =r'D:\Info\case_resource\sqlserver_old_case\basic'
+mss_old_case =r'D:\Info\case_resource\sqlserver_old_case\basic1'
+mss_old_complex =r'D:\Info\case_resource\sqlserver_old_case\complex'
 mss_case_ddl = r'D:\Info\case_resource\sqlserver\basic'
 mss_case_obj = r'D:\英方\Sqlserver\用例整理DDL_250530\数据对象'
 mss_case_debug = r'D:\Info\case_resource\sqlserver\basic1'
@@ -152,7 +153,7 @@ class read_case():
                 # if self.templine.startswith('case') and  ('重命名' or '修改列属性') not in self.templine.replace(' ',''):
                 if re.sub(r'\s|\t', '', self.templine).startswith('case') and \
                         not any(word in self.templine.replace(' ', '') for word in
-                                ('外键', '重命名','分区', '触发器', '删除计算列')):  # 过滤，不执行带关键词的case,'触发器','存储过程'
+                                ('外键', '重命名', '视图','存储','函数','删除计算列')):  # 过滤，不执行带关键词的case,'触发器','存储过程'
                     # if self.templine.startswith('case'):
                     self.sqldict['casename'] = self.templine
                     print(self.templine)
@@ -625,7 +626,7 @@ class read_case():
             print(f'{label} 已继续')
         return False
 # 建表延迟
-crt_delay =1
+crt_delay =0.2
 # dml/ddl延迟
 dml_delay = 1
 # 是否overflow，0、不处理行内容，1、缩短行款
@@ -639,7 +640,7 @@ if __name__ == '__main__':  # 手动调试
     type = config.get(db, 'type')
     incr = 0   # 表名唯一,以斜杠/区分用例，oracle用例文件有大量重复表名，1开启此项，默认0-false
     pre_crt = 1#     每个用例文件统一建表后再进行dml、ddl等操作      ，1开启此项，默认0-false
-    cdir = mss_case_all
+    cdir = mss_old_complex
     p = read_case(incr, type, 1, cdir)
     mssql, type = p.define(type, db)
     T1 = time.perf_counter()
