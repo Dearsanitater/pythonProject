@@ -369,10 +369,6 @@ class read_case():
                     conn.rollback()
                     j += 1
                     pass
-
-                    # except event as e:
-                    #     raise Exception
-
                 except:
                     print(f'执行{caseline}\n失败', ibm_db.conn_errormsg())
             T3 = time.perf_counter()
@@ -640,13 +636,14 @@ if __name__ == '__main__':  # 手动调试
     type = config.get(db, 'type')
     incr = 0   # 表名唯一,以斜杠/区分用例，oracle用例文件有大量重复表名，1开启此项，默认0-false
     pre_crt = 1#     每个用例文件统一建表后再进行dml、ddl等操作      ，1开启此项，默认0-false
-    cdir = mss_old_complex
+    #cdir = mss_old_complex
+    cdir=mss_case_all
     p = read_case(incr, type, 1, cdir)
     mssql, type = p.define(type, db)
     T1 = time.perf_counter()
     for casefile in p.ergodic(type):
         p.analysis(casefile, pre_crt)
-        p.execute(mssql,None)
+        #p.execute(mssql,None)
     T2 = time.perf_counter()
     print('总共耗时：\t\t%f毫秒' % ((T2 - T1) * 1000))
     p.clean(mssql)
